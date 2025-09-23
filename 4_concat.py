@@ -23,7 +23,6 @@ for category, files in input_files.items():
     for year, file_path in files.items():
         df = pd.read_csv(file_path)
         dfs.append(df)
-    combined_df = pd.concat(dfs, ignore_index=True)
-    output_file = f"Q:/Brightcove/Reporting/daily_analytics_2023_2024_2025_{category}.csv"
-    combined_df.to_csv(output_file, index=False)
-    print(f"Combined data written to {output_file}")
+    combined_df = pd.concat(dfs)
+    combined_df.to_csv(f"Q:/Brightcove/Reporting/daily_analytics_2023_2024_2025_{category}.csv", index=False)
+    print(f"Combined data written to Q:/Brightcove/Reporting/daily_analytics_2023_2024_2025_{category}.csv")
