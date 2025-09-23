@@ -257,7 +257,6 @@ def main():
                     chk.write(json.dumps(row) + "\n")
                     chk.flush()
                     checkpoint_rows.append(row)
-                    
                     # update last_date_map
                     last_date_map[key] = date
                 
@@ -269,17 +268,13 @@ def main():
     
     csv_fields = [
         "channel", "account_id", "video_id", "name", "date",
-        "video_view",
-        "views_desktop", "views_mobile", "views_tablet", "views_other", 
+        "video_view", "views_desktop", "views_mobile", "views_tablet", "views_other", 
         "video_impression", "play_rate", "engagement_score",
-        "video_engagement_1",
-        "video_engagement_25",
-        "video_engagement_50", "video_engagement_75",
+        "video_engagement_1", "video_engagement_25", "video_engagement_50", "video_engagement_75",
         "video_engagement_100", "video_percent_viewed", "video_seconds_viewed",
         "created_at", "published_at", "original_filename", "created_by",
         "video_content_type", "video_length", "video_duration", "video_category",
-        "country", "language",
-        "business_unit", "tags", "reference_id",
+        "country", "language", "business_unit", "tags", "reference_id",
         "report_generated_on"
     ]
     
@@ -289,6 +284,7 @@ def main():
         for row in checkpoint_rows:
             if row["channel"] in ["internet", "intranet"]:
                 writer.writerow(row)
+
     print(f"Final output written to: {master_csv}")
     
     with open(master_csv_research, "w", newline="", encoding="utf-8") as f:
@@ -297,6 +293,7 @@ def main():
         for row in checkpoint_rows:
             if row["channel"] in ["neo", "research", "research_internal"]:
                 writer.writerow(row)
+                
     print(f"Final output written to: {master_csv_research}")
 
 if __name__ == "__main__":
