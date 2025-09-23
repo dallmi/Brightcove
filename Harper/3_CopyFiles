@@ -1,0 +1,49 @@
+import shutil
+import os
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+# Define the source folder
+source_folder = r"\\ubsprod.msad.ubs.net\UserData\T294573\Home\IMPORTANT\Projects\brightcove_ori\Harper\csv"
+
+# List of filenames
+file_names = [
+    "circleone_cms.csv",
+    "digital_networks_events_cms.csv",
+    "fa_web_cms.csv",
+    "impact_cms.csv",
+    "intranet_cms.csv",
+    "MyWay_cms.csv",
+    "neo_cms.csv",
+    "research_internal_cms.csv",
+    "research_cms.csv",
+    "SuMiTrust_cms.csv",
+    "internet_cms.csv"
+]
+# Generate dynamic folder suffix based on current date
+# folder_suffix = datetime.now().strftime("%Y_%m")
+folder_suffix = (datetime.now() + relativedelta(months=1)).strftime("%Y_%m")
+
+# List of destination folders with dynamic suffix
+destination_folders = [
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\Circle-1--GWM\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\DN&Events--Shared\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\FA-Web--GWMUS\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\Impact--GWM\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\IntRAnet--Shared\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\MyWay--GWM\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\NEO--IB\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\Research-Internal--IB\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\Research-US--IB\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\SuMi-Trust\{folder_suffix}",
+    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\IntERnet--Shared\{folder_suffix}"
+]
+
+# Copy each file to its corresponding destination folder
+for file_name, dest_folder in zip(file_names, destination_folders):
+    source_path = os.path.join(source_folder, file_name)
+    dest_path = os.path.join(dest_folder, file_name)
+    print(f"Copying from {source_path} to {dest_path}")
+    shutil.copy2(source_path, dest_path)
+
+print("Files copied successfully!")
