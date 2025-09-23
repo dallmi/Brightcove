@@ -1,0 +1,3 @@
+# This file keeps the Reporting folder in the repository
+# Reporting folder for analytics and report output files
+# Referenced by 4_concat.py for daily analytics reports
