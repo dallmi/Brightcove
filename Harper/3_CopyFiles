@@ -20,9 +20,11 @@ file_names = [
     "SuMiTrust_cms.csv",
     "internet_cms.csv"
 ]
+
 # Generate dynamic folder suffix based on current date
 # folder_suffix = datetime.now().strftime("%Y_%m")
 folder_suffix = (datetime.now() + relativedelta(months=1)).strftime("%Y_%m")
+
 
 # List of destination folders with dynamic suffix
 destination_folders = [
