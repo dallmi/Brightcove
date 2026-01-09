@@ -3,8 +3,23 @@ import os
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
+# =============================================================================
+# CONFIGURATION - Set these environment variables or modify paths below
+# =============================================================================
+# Environment variables:
+#   NETWORK_DOMAIN    - Corporate network domain (e.g., "corp.example.com")
+#   NETWORK_USER_ID   - Your network user ID
+#   REPORTS_BASE_PATH - Base path to reports share (e.g., "\\\\server\\share\\Reports")
+
+NETWORK_DOMAIN = os.environ.get("NETWORK_DOMAIN", "your.network.domain")
+NETWORK_USER_ID = os.environ.get("NETWORK_USER_ID", "YOUR_USER_ID")
+REPORTS_BASE_PATH = os.environ.get(
+    "REPORTS_BASE_PATH",
+    fr"\\{NETWORK_DOMAIN}\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports"
+)
+
 # Define the source folder
-source_folder = r"\\ubsprod.msad.ubs.net\UserData\T294573\Home\IMPORTANT\Projects\brightcove_ori\Harper\csv"
+source_folder = fr"\\{NETWORK_DOMAIN}\UserData\{NETWORK_USER_ID}\Home\IMPORTANT\Projects\brightcove_ori\Harper\csv"
 
 # List of filenames
 file_names = [
@@ -25,20 +40,24 @@ file_names = [
 # folder_suffix = datetime.now().strftime("%Y_%m")
 folder_suffix = (datetime.now() + relativedelta(months=1)).strftime("%Y_%m")
 
+# Report folder names (corresponding to file_names order)
+report_folders = [
+    "Circle-1--GWM",
+    "DN&Events--Shared",
+    "FA-Web--GWMUS",
+    "Impact--GWM",
+    "IntRAnet--Shared",
+    "MyWay--GWM",
+    "NEO--IB",
+    "Research-Internal--IB",
+    "Research-US--IB",
+    "SuMi-Trust",
+    "IntERnet--Shared"
+]
 
 # List of destination folders with dynamic suffix
 destination_folders = [
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\Circle-1--GWM\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\DN&Events--Shared\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\FA-Web--GWMUS\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\Impact--GWM\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\IntRAnet--Shared\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\MyWay--GWM\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\NEO--IB\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\Research-Internal--IB\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\Research-US--IB\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\SuMi-Trust\{folder_suffix}",
-    fr"\\UBSPROD.MSAD.UBS.NET\GROUPSHARES\GLOBAL\BC-Video-Dump\DATA\_Reports\IntERnet--Shared\{folder_suffix}"
+    fr"{REPORTS_BASE_PATH}\{folder}\{folder_suffix}" for folder in report_folders
 ]
 
 # Copy each file to its corresponding destination folder
