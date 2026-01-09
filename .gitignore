@@ -1,0 +1,40 @@
+# Secrets and credentials
+secrets.json
+credentials.json
+*.pem
+*.key
+
+# Environment files
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+
+# Output data files
+*.csv
+*.json
+!*_README.md
+*.parquet
+
+# Checkpoint and cache files
+checkpoint_log.txt
+*_cache_*.json
+analytics_cache_*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
