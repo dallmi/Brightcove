@@ -60,13 +60,13 @@ python UnifiedPipeline/scripts/3_daily_analytics.py   REM ~4-8 h (2024+2025+2026
 python UnifiedPipeline/scripts/4_combine_output.py    REM ~3 min
 ```
 
-### Folgende Runs (~2 Stunden)
+### Folgende Runs (~1 Stunde)
 
 ```cmd
 cd C:\path\to\Brightcove
 
 python UnifiedPipeline/scripts/1_cms_metadata.py      REM ~10 min  (WICHTIG: neue Videos!)
-python UnifiedPipeline/scripts/2_dt_last_viewed.py    REM ~60-90 min (WICHTIG: dt_last_viewed!)
+python UnifiedPipeline/scripts/2_dt_last_viewed.py    REM ~5-10 min (inkrementell!)
 python UnifiedPipeline/scripts/3_daily_analytics.py   REM ~30-60 min (nur 2026)
 python UnifiedPipeline/scripts/4_combine_output.py    REM ~3 min
 ```
@@ -76,9 +76,25 @@ python UnifiedPipeline/scripts/4_combine_output.py    REM ~3 min
 | Skript | Warum bei jedem Run? |
 |--------|---------------------|
 | `1_cms_metadata` | Neue Videos seit letztem Run erfassen |
-| `2_dt_last_viewed` | dt_last_viewed aktualisieren (90-Tage-Filter braucht aktuelle Daten) |
+| `2_dt_last_viewed` | dt_last_viewed aktualisieren (inkrementell seit letztem Run) |
 | `3_daily_analytics` | Historisch wird automatisch übersprungen |
 | `4_combine_output` | CSVs neu generieren |
+
+### Inkrementeller Modus (Script 2)
+
+Ab dem zweiten Run arbeitet `2_dt_last_viewed.py` inkrementell:
+- Lädt nur Daten seit dem letzten Run (+ 3 Tage Overlap für Analytics-Latenz)
+- Aktualisiert `dt_last_viewed` nur wenn neues Datum > bestehendes Datum
+- **~98% weniger API-Calls** bei monatlichen Runs
+
+Konfigurierbar in `settings.json`:
+```json
+"windows": {
+  "incremental_overlap_days": 3
+}
+```
+
+Um einen Full-Refresh zu erzwingen: `checkpoints/analytics_checkpoint.json` löschen.
 
 ## Daten-Strategie
 
@@ -114,6 +130,7 @@ UnifiedPipeline/
 │   ├── accounts.json       # 11 Accounts + Kategorien
 │   └── settings.json       # Jahre, Retry, etc.
 ├── checkpoints/
+│   ├── analytics_checkpoint.json # dt_last_viewed Status + last_run_date
 │   ├── daily_historical.jsonl    # 2024+2025 Daten
 │   ├── daily_current.jsonl       # 2026 Daten
 │   └── historical_status.json    # Tracking welche Jahre fertig
