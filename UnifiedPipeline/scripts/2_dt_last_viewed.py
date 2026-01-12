@@ -440,16 +440,16 @@ def enrich_cms_metadata(
     return videos
 
 
-def write_stakeholder_excel(
+def write_lifecycle_excel(
     videos: List[Dict],
     account_name: str,
     output_dir: Path,
     logger
 ) -> None:
     """
-    Write enriched CMS data to Excel file for stakeholder.
+    Write enriched CMS data to Excel file for lifecycle management.
 
-    Creates {account_name}_cms.xlsx in the stakeholder output folder.
+    Creates {account_name}_cms.xlsx in the life_cycle_mgmt output folder.
     Format matches Harper's channel_cms.xlsx output.
     """
     try:
@@ -599,8 +599,8 @@ def main():
             write_last_viewed_json(last_map, lv_path, logger)
             enriched_videos = enrich_cms_metadata(cms_path, last_map, enriched_path, logger)
 
-            # Write Excel for stakeholder (Harper-compatible format)
-            write_stakeholder_excel(enriched_videos, account_name, paths['stakeholder'], logger)
+            # Write Excel for lifecycle management (Harper-compatible format)
+            write_lifecycle_excel(enriched_videos, account_name, paths['life_cycle_mgmt'], logger)
 
             logger.info(f"Completed {account_name}: {len(last_map)} videos with views")
 

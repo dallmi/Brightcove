@@ -119,7 +119,7 @@ UnifiedPipeline/
 │   ├── cms/                # CMS Metadaten (JSON/CSV)
 │   ├── analytics/          # dt_last_viewed + enriched JSON
 │   ├── daily/              # Finale Analytics CSVs
-│   └── stakeholder/        # Excel-Dateien für Stakeholder ⭐
+│   └── life_cycle_mgmt/    # Excel-Dateien für Lifecycle Management ⭐
 │       ├── Internet_cms.xlsx
 │       ├── Intranet_cms.xlsx
 │       ├── neo_cms.xlsx
@@ -133,12 +133,12 @@ UnifiedPipeline/
     └── 4_combine_output.py
 ```
 
-## Stakeholder-Output (Excel)
+## Lifecycle Management Output (Excel)
 
 Nach jedem Run von `2_dt_last_viewed.py` werden automatisch Excel-Dateien generiert:
 
 ```
-output/stakeholder/
+output/life_cycle_mgmt/
 ├── Internet_cms.xlsx
 ├── Intranet_cms.xlsx
 ├── neo_cms.xlsx

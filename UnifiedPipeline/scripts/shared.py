@@ -509,7 +509,7 @@ def get_output_paths() -> Dict[str, Path]:
         'cms': root / 'output' / 'cms',
         'analytics': root / 'output' / 'analytics',
         'daily': root / 'output' / 'daily',
-        'stakeholder': root / 'output' / 'stakeholder',  # Excel files for stakeholder
+        'life_cycle_mgmt': root / 'output' / 'life_cycle_mgmt',  # Excel files for lifecycle management
         'checkpoints': root / 'checkpoints',
         'logs': root / 'logs'
     }
