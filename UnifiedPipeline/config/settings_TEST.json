@@ -10,7 +10,8 @@
   "windows": {
     "min_window_days": 1,
     "default_window_type": "quarterly",
-    "problematic_accounts": ["Internet"]
+    "problematic_accounts": ["Internet"],
+    "incremental_overlap_days": 3
   },
   "daily_analytics": {
     "historical_years": [],

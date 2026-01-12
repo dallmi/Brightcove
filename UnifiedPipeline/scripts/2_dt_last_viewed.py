@@ -33,7 +33,7 @@ Output:
 import sys
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
 import time
@@ -304,10 +304,14 @@ def process_account(
     proxies: dict,
     checkpoint_path: Path,
     checkpoint: dict,
-    logger
+    logger,
+    overlap_days: int = 3
 ) -> Dict[str, str]:
     """
     Process all windows for an account with checkpointing.
+
+    Supports incremental mode: if account was previously completed,
+    only fetches data from (last_run_date - overlap_days) to now.
 
     Returns:
         Dict mapping video_id -> dt_last_viewed
@@ -319,16 +323,29 @@ def process_account(
             "windows_completed": [],
             "windows_failed": [],
             "last_map": {},
-            "last_updated": None
+            "last_updated": None,
+            "last_run_date": None
         }
 
     account_chk = checkpoint["accounts"][account_name]
 
-    if account_chk["status"] == "completed":
-        logger.info(f"Account {account_name} already completed, loading results")
-        return account_chk["last_map"]
+    # Ensure last_run_date field exists (for backwards compatibility)
+    # If missing but last_updated exists, derive from it
+    if "last_run_date" not in account_chk or account_chk["last_run_date"] is None:
+        if account_chk.get("last_updated"):
+            # Extract date from ISO timestamp (e.g., "2026-01-12T14:30:00" -> "2026-01-12")
+            account_chk["last_run_date"] = account_chk["last_updated"][:10]
+            logger.info(f"Migrated last_run_date from last_updated: {account_chk['last_run_date']}")
+        else:
+            account_chk["last_run_date"] = None
 
-    # Get date bounds
+    # Check if this is an incremental update (previously completed)
+    is_incremental = (
+        account_chk["status"] == "completed" and
+        account_chk.get("last_run_date") is not None
+    )
+
+    # Get date bounds from API
     first_date, last_date = get_date_bounds(
         auth_manager, account_id, retry_config, proxies, logger
     )
@@ -339,17 +356,53 @@ def process_account(
         save_checkpoint_atomic(checkpoint_path, checkpoint)
         return {}
 
-    # Generate windows
-    windows = generate_windows(first_date, last_date, window_type)
-    logger.info(f"Generated {len(windows)} {window_type} windows")
-
-    # Get completed windows
-    completed = set(account_chk["windows_completed"])
+    # Load existing last_map
     last_map = account_chk["last_map"]
+
+    if is_incremental:
+        # INCREMENTAL MODE: Only fetch from (last_run_date - overlap_days) to now
+        last_run = account_chk["last_run_date"]
+
+        # Calculate incremental start date with overlap buffer
+        last_run_dt = datetime.strptime(last_run, "%Y-%m-%d")
+        incremental_start_dt = last_run_dt - timedelta(days=overlap_days)
+        incremental_start = incremental_start_dt.strftime("%Y-%m-%d")
+
+        # Don't go before first_date
+        if incremental_start < first_date:
+            incremental_start = first_date
+
+        logger.info(f"INCREMENTAL MODE: {account_name}")
+        logger.info(f"  Last run: {last_run}")
+        logger.info(f"  Fetching: {incremental_start} to {last_date} (with {overlap_days} day overlap)")
+
+        # Check if there's anything new to fetch
+        if incremental_start > last_date:
+            logger.info(f"  No new data since last run")
+            return last_map
+
+        # Generate windows only for incremental period
+        windows = generate_windows(incremental_start, last_date, window_type)
+        logger.info(f"  Generated {len(windows)} {window_type} windows for incremental update")
+
+        # For incremental, we process all windows (don't skip based on windows_completed)
+        # because the date range is already limited
+        pending_windows = windows
+        completed = set()
+    else:
+        # FULL MODE: First run or resume from interruption
+        logger.info(f"FULL MODE: {account_name} (first run or resuming)")
+
+        # Generate windows for full date range
+        windows = generate_windows(first_date, last_date, window_type)
+        logger.info(f"Generated {len(windows)} {window_type} windows")
+
+        # Get completed windows (for resume capability)
+        completed = set(account_chk["windows_completed"])
+        pending_windows = [w for w in windows if f"{w[0]}_{w[1]}" not in completed]
 
     # Process windows
     account_chk["status"] = "in_progress"
-    pending_windows = [w for w in windows if f"{w[0]}_{w[1]}" not in completed]
 
     for from_date, to_date in tqdm(pending_windows, desc=f"Windows for {account_name}"):
         window_key = f"{from_date}_{to_date}"
@@ -372,7 +425,9 @@ def process_account(
 
         if success:
             completed.add(window_key)
-            account_chk["windows_completed"] = list(completed)
+            if not is_incremental:
+                # Only track windows_completed for full mode (resume capability)
+                account_chk["windows_completed"] = list(completed)
         else:
             account_chk["windows_failed"].append(window_key)
 
@@ -380,9 +435,13 @@ def process_account(
         account_chk["last_updated"] = datetime.now().isoformat()
         save_checkpoint_atomic(checkpoint_path, checkpoint)
 
-    # Mark as completed
+    # Mark as completed and record last_run_date
     account_chk["status"] = "completed"
+    account_chk["last_run_date"] = last_date  # The latest date we fetched up to
     save_checkpoint_atomic(checkpoint_path, checkpoint)
+
+    if is_incremental:
+        logger.info(f"Incremental update completed. last_run_date updated to {last_date}")
 
     return last_map
 
@@ -554,6 +613,7 @@ def main():
     # Process each account
     accounts = config['accounts']['accounts']
     problematic_accounts = settings['windows'].get('problematic_accounts', [])
+    overlap_days = settings['windows'].get('incremental_overlap_days', 3)
 
     for account_name, account_config in accounts.items():
         account_id = account_config['account_id']
@@ -589,7 +649,8 @@ def main():
                 proxies=proxies,
                 checkpoint_path=checkpoint_path,
                 checkpoint=checkpoint,
-                logger=logger
+                logger=logger,
+                overlap_days=overlap_days
             )
 
             # Write outputs
