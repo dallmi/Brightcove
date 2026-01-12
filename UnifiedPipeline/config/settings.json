@@ -1,0 +1,36 @@
+{
+  "api": {
+    "analytics_base_url": "https://analytics.api.brightcove.com/v1/data",
+    "cms_base_url": "https://cms.api.brightcove.com/v1/accounts",
+    "oauth_url": "https://oauth.brightcove.com/v3/access_token",
+    "page_limit": 100,
+    "analytics_page_limit": 10000,
+    "token_refresh_buffer_seconds": 30
+  },
+  "retry": {
+    "max_retries": 5,
+    "initial_delay_seconds": 2.0,
+    "max_delay_seconds": 120.0,
+    "exponential_base": 2.0,
+    "jitter_factor": 0.5,
+    "retryable_status_codes": [429, 500, 502, 503, 504]
+  },
+  "windows": {
+    "min_window_days": 1,
+    "default_window_type": "quarterly",
+    "problematic_accounts": ["Internet"]
+  },
+  "daily_analytics": {
+    "historical_years": [2024, 2025],
+    "current_year": 2026,
+    "days_back_filter": 90,
+    "mode": "auto"
+  },
+  "output": {
+    "csv_encoding": "utf-8",
+    "json_indent": 2
+  },
+  "proxy": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "accounts": {
+    "Internet": {
+      "account_id": "1197194721001",
+      "priority": 1,
+      "initial_window_size": "monthly",
+      "category": "internet_intranet",
+      "description": "External communications - high volume"
+    },
+    "Intranet": {
+      "account_id": "4413047246001",
+      "priority": 2,
+      "initial_window_size": "quarterly",
+      "category": "internet_intranet",
+      "description": "Internal communications"
+    },
+    "neo": {
+      "account_id": "5972928207001",
+      "priority": 3,
+      "initial_window_size": "quarterly",
+      "category": "research",
+      "description": "Investment Banking client content"
+    },
+    "research": {
+      "account_id": "3467683096001",
+      "priority": 4,
+      "initial_window_size": "quarterly",
+      "category": "research",
+      "description": "Research publications"
+    },
+    "research_internal": {
+      "account_id": "3731172721001",
+      "priority": 5,
+      "initial_window_size": "quarterly",
+      "category": "research",
+      "description": "Internal research"
+    },
+    "impact": {
+      "account_id": "968049871001",
+      "priority": 6,
+      "initial_window_size": "quarterly",
+      "category": "gwm",
+      "description": "Impact investing - GWM"
+    },
+    "circleone": {
+      "account_id": "6283605170001",
+      "priority": 7,
+      "initial_window_size": "quarterly",
+      "category": "gwm",
+      "description": "Premium client content - GWM"
+    },
+    "digital_networks_events": {
+      "account_id": "4631489639001",
+      "priority": 8,
+      "initial_window_size": "quarterly",
+      "category": "events",
+      "description": "Event broadcasting"
+    },
+    "fa_web": {
+      "account_id": "807049819001",
+      "priority": 9,
+      "initial_window_size": "quarterly",
+      "category": "gwm",
+      "description": "Financial advisor portal - GWM US"
+    },
+    "SuMiTrust": {
+      "account_id": "5653786046001",
+      "priority": 10,
+      "initial_window_size": "quarterly",
+      "category": "gwm",
+      "description": "Joint venture content"
+    },
+    "MyWay": {
+      "account_id": "6300219615001",
+      "priority": 11,
+      "initial_window_size": "quarterly",
+      "category": "gwm",
+      "description": "Client education - GWM"
+    }
+  },
+  "categories": {
+    "internet_intranet": {
+      "description": "Internet and Intranet channels",
+      "accounts": ["Internet", "Intranet"]
+    },
+    "research": {
+      "description": "Research and Neo channels",
+      "accounts": ["neo", "research", "research_internal"]
+    },
+    "gwm": {
+      "description": "Global Wealth Management channels",
+      "accounts": ["impact", "circleone", "fa_web", "SuMiTrust", "MyWay"]
+    },
+    "events": {
+      "description": "Events and broadcasting",
+      "accounts": ["digital_networks_events"]
+    }
+  }
+}

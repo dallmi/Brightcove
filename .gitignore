@@ -21,6 +21,7 @@ env/
 # Output data files
 *.csv
 *.json
+!UnifiedPipeline/config/*.json
 !*_README.md
 *.parquet
 
