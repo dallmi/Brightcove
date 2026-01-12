@@ -5,13 +5,24 @@
       "priority": 1,
       "initial_window_size": "quarterly",
       "category": "gwm",
-      "description": "Client education - GWM (SMALLEST ACCOUNT FOR TESTING)"
+      "description": "Client education - GWM (SMALL ACCOUNT FOR TESTING)"
+    },
+    "research_internal": {
+      "account_id": "3731172721001",
+      "priority": 2,
+      "initial_window_size": "quarterly",
+      "category": "research",
+      "description": "Internal research (FOR TESTING RESEARCH CATEGORY)"
     }
   },
   "categories": {
     "gwm": {
       "description": "Global Wealth Management channels",
       "accounts": ["MyWay"]
+    },
+    "research": {
+      "description": "Research channels",
+      "accounts": ["research_internal"]
     }
   }
 }
