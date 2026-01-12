@@ -128,13 +128,13 @@ def fetch_all_videos(auth_manager, account_id, proxies=None):
     
     #get total for ETA
     total = requests.get(
-        f"https://cms.api.brightcove.com/v1/accounts/{account_id}/videos,
+        f"https://cms.api.brightcove.com/v1/accounts/{account_id}/counts/videos",
         headers={"Authorization": f"Bearer {auth_manager.get_token()}"},
         proxies=proxies
-    ).json().["count"]
+    ).json()["count"]
 
     #give tqdm the total so it can show % ETA
-    pbar = tqdm(total_total, unit="videos", desc=f"Account {account_id}")
+    pbar = tqdm(total=total, unit="videos", desc=f"Account {account_id}")
 
     while True:
         token = auth_manager.get_token()
@@ -149,7 +149,7 @@ def fetch_all_videos(auth_manager, account_id, proxies=None):
             },
             proxies=proxies
         )
-        res.raise_for_status()
+        resp.raise_for_status()
 
         batch = resp.json()
         if not batch:
