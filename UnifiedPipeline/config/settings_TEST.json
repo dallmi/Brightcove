@@ -1,0 +1,28 @@
+{
+  "retry": {
+    "max_retries": 3,
+    "initial_delay_seconds": 2.0,
+    "max_delay_seconds": 30.0,
+    "exponential_base": 2.0,
+    "jitter_factor": 0.5,
+    "retryable_status_codes": [429, 500, 502, 503, 504]
+  },
+  "windows": {
+    "min_window_days": 1,
+    "default_window_type": "quarterly",
+    "problematic_accounts": ["Internet"]
+  },
+  "daily_analytics": {
+    "historical_years": [],
+    "current_year": 2026,
+    "days_back_filter": 90,
+    "mode": "auto"
+  },
+  "output": {
+    "csv_encoding": "utf-8",
+    "json_indent": 2
+  },
+  "proxy": {
+    "enabled": true
+  }
+}

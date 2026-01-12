@@ -63,18 +63,39 @@ def get_project_root() -> Path:
     return Path(__file__).parent.parent
 
 
-def load_config() -> Dict[str, Any]:
-    """Load all configuration files."""
+def load_config(test_mode: bool = None) -> Dict[str, Any]:
+    """
+    Load all configuration files.
+
+    Args:
+        test_mode: If True, use *_TEST.json configs. If None, check PIPELINE_TEST env var.
+
+    Environment:
+        PIPELINE_TEST=1  -> Use test configs (accounts_TEST.json, settings_TEST.json)
+    """
     root = get_project_root()
     config = {}
 
+    # Determine mode
+    if test_mode is None:
+        test_mode = os.environ.get('PIPELINE_TEST', '').lower() in ('1', 'true', 'yes')
+
+    suffix = "_TEST" if test_mode else ""
+
+    if test_mode:
+        print(f"*** TEST MODE ACTIVE - Using *_TEST.json configs ***")
+
     # Load accounts
-    accounts_path = root / "config" / "accounts.json"
+    accounts_path = root / "config" / f"accounts{suffix}.json"
+    if not accounts_path.exists() and test_mode:
+        raise FileNotFoundError(f"Test config not found: {accounts_path}")
     with open(accounts_path, 'r', encoding='utf-8') as f:
         config['accounts'] = json.load(f)
 
     # Load settings
-    settings_path = root / "config" / "settings.json"
+    settings_path = root / "config" / f"settings{suffix}.json"
+    if not settings_path.exists() and test_mode:
+        raise FileNotFoundError(f"Test config not found: {settings_path}")
     with open(settings_path, 'r', encoding='utf-8') as f:
         config['settings'] = json.load(f)
 

@@ -15,6 +15,36 @@ Robuste Pipeline zur Erfassung von Brightcove Video-Analytics mit allen Metadate
   }
   ```
 
+## Test-Modus (empfohlen vor erstem Run!)
+
+Testet die Pipeline mit nur 1 Account (MyWay) und nur 2026 (keine History):
+
+```bash
+cd /Users/micha/Documents/Arbeit/Brightcove
+
+# Test-Modus aktivieren
+export PIPELINE_TEST=1
+
+# Alle Scripts durchlaufen (~5-10 min statt 5-9 Stunden)
+python UnifiedPipeline/scripts/1_cms_metadata.py
+python UnifiedPipeline/scripts/2_dt_last_viewed.py
+python UnifiedPipeline/scripts/3_daily_analytics.py
+python UnifiedPipeline/scripts/4_combine_output.py
+
+# Test-Modus deaktivieren
+unset PIPELINE_TEST
+```
+
+**Test-Config (`config/*_TEST.json`):**
+- `accounts_TEST.json`: Nur MyWay (kleinster Account)
+- `settings_TEST.json`: Nur 2026, keine historischen Jahre
+
+**Nach erfolgreichem Test:** Checkpoints löschen vor Produktions-Run:
+```bash
+rm -rf UnifiedPipeline/checkpoints/*
+rm -rf UnifiedPipeline/output/*
+```
+
 ## Workflow
 
 ### Erster Run (~5-9 Stunden)

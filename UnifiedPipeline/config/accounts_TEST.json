@@ -1,0 +1,17 @@
+{
+  "accounts": {
+    "MyWay": {
+      "account_id": "6300219615001",
+      "priority": 1,
+      "initial_window_size": "quarterly",
+      "category": "gwm",
+      "description": "Client education - GWM (SMALLEST ACCOUNT FOR TESTING)"
+    }
+  },
+  "categories": {
+    "gwm": {
+      "description": "Global Wealth Management channels",
+      "accounts": ["MyWay"]
+    }
+  }
+}
