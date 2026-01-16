@@ -572,7 +572,7 @@ def main():
     # Process and write
     results = process_checkpoints_streaming(
         checkpoint_files=checkpoint_files,
-        output_dir=paths['root'],
+        output_dir=paths['output'],
         channel_to_category=channel_to_category,
         historical_years=historical_years,
         current_year=current_year,
@@ -591,7 +591,7 @@ def main():
             logger.info(f"  {filename}: {count:,} rows")
 
         # Calculate total size
-        parquet_dir = paths['root'] / "output" / "parquet"
+        parquet_dir = paths['output'] / "parquet"
         total_size = sum(f.stat().st_size for f in parquet_dir.rglob("*.parquet"))
         total_size_mb = total_size / (1024 * 1024)
 

@@ -506,9 +506,12 @@ def get_output_paths() -> Dict[str, Path]:
     """Get standard output directory paths."""
     root = get_project_root()
     return {
+        'root': root,  # Project root directory
+        'output': root / 'output',  # Base output directory
         'cms': root / 'output' / 'cms',
         'analytics': root / 'output' / 'analytics',
         'daily': root / 'output' / 'daily',
+        'parquet': root / 'output' / 'parquet',  # Parquet output for PowerBI
         'life_cycle_mgmt': root / 'output' / 'life_cycle_mgmt',  # Excel files for lifecycle management
         'checkpoints': root / 'checkpoints',
         'logs': root / 'logs'
