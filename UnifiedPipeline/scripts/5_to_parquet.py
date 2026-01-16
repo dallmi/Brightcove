@@ -7,14 +7,15 @@ Purpose:
     - Year partitioning (faster queries)
     - Proper data types (Int64, Float, DateTime)
     - Snappy compression (~70-80% smaller than CSV)
+    - Incremental mode: only regenerates current year by default
 
-Runtime: ~2-5 minutes
+Runtime: ~2-5 minutes (full), ~30 seconds (incremental)
 
 Features:
     - Reads JSONL checkpoints directly (skips CSV generation)
     - Streaming: processes in batches to handle multi-GB files
     - Partitioned output: year=2024/, year=2025/, year=2026/
-    - Also generates non-partitioned single files per category
+    - Incremental: skips historical years if parquet exists (use --force to override)
 
 Input:
     - checkpoints/daily_historical.jsonl (2024 + 2025 data)
@@ -26,15 +27,20 @@ Output:
     - output/parquet/daily_analytics_all.parquet (single file)
     - output/parquet/daily_analytics_{category}.parquet (per category)
 
+Usage:
+    python 5_to_parquet.py          # Incremental: only current year
+    python 5_to_parquet.py --force  # Full: regenerate everything
+
 Requirements:
     pip install pandas pyarrow
 """
 
 import sys
 import json
+import argparse
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Iterator, Optional
+from typing import Dict, List, Iterator, Optional, Set
 from collections import defaultdict
 
 # Add scripts directory to path for imports
@@ -325,22 +331,69 @@ def write_parquet_single(
 # MAIN PROCESSING
 # =============================================================================
 
+def get_existing_parquet_years(parquet_dir: Path) -> Set[int]:
+    """Check which year parquet files already exist."""
+    existing_years = set()
+    for f in parquet_dir.glob("daily_analytics_*.parquet"):
+        # Extract year from filename like "daily_analytics_2024.parquet"
+        name = f.stem  # "daily_analytics_2024"
+        parts = name.split("_")
+        if len(parts) >= 3:
+            try:
+                year = int(parts[-1])
+                if 2000 <= year <= 2100:  # Sanity check
+                    existing_years.add(year)
+            except ValueError:
+                pass
+    return existing_years
+
+
 def process_checkpoints_streaming(
     checkpoint_files: List[Path],
     output_dir: Path,
     channel_to_category: Dict[str, str],
+    historical_years: Set[int],
+    current_year: int,
+    force: bool,
     logger
 ) -> Dict[str, int]:
     """
     Process checkpoint files with streaming and write Parquet outputs.
 
-    Returns dict of output file -> row count.
+    Args:
+        checkpoint_files: List of JSONL checkpoint files to process
+        output_dir: Root output directory
+        channel_to_category: Mapping of channel name to category
+        historical_years: Set of historical years (e.g., {2024, 2025})
+        current_year: Current year (e.g., 2026)
+        force: If True, regenerate all files. If False, skip existing historical.
+        logger: Logger instance
+
+    Returns:
+        Dict of output file -> row count
     """
     import pandas as pd
 
+    parquet_dir = output_dir / "parquet"
+    parquet_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check which historical years already have parquet files
+    existing_years = get_existing_parquet_years(parquet_dir)
+
+    # Determine which years to skip
+    if force:
+        years_to_skip = set()
+        logger.info("FORCE MODE: Regenerating all parquet files")
+    else:
+        years_to_skip = existing_years & historical_years
+        if years_to_skip:
+            logger.info(f"INCREMENTAL MODE: Skipping existing historical years: {sorted(years_to_skip)}")
+        else:
+            logger.info("INCREMENTAL MODE: No existing historical files found, processing all")
+
     # Count total lines for progress
     total_lines = sum(count_jsonl_lines(f) for f in checkpoint_files)
-    logger.info(f"Total rows to process: {total_lines:,}")
+    logger.info(f"Total rows in checkpoints: {total_lines:,}")
 
     # Accumulators for batched writing
     all_rows = []
@@ -348,6 +401,7 @@ def process_checkpoints_streaming(
     rows_by_category = defaultdict(list)
 
     processed = 0
+    skipped = 0
 
     # Stream through all checkpoint files
     for checkpoint_file in checkpoint_files:
@@ -360,6 +414,11 @@ def process_checkpoints_streaming(
             channel = row.get("channel", "")
             category = channel_to_category.get(channel, "other")
 
+            # Skip rows from years we don't need to regenerate
+            if year in years_to_skip:
+                skipped += 1
+                continue
+
             all_rows.append(row)
             if year:
                 rows_by_year[year].append(row)
@@ -369,29 +428,23 @@ def process_checkpoints_streaming(
 
             # Progress logging every 100k rows
             if processed % 100000 == 0:
-                logger.info(f"  Processed {processed:,} / {total_lines:,} rows ({100*processed/total_lines:.1f}%)")
+                logger.info(f"  Processed {processed:,} rows (skipped {skipped:,} from existing years)")
 
-    logger.info(f"\nTotal rows processed: {processed:,}")
+    logger.info(f"\nTotal rows to write: {processed:,} (skipped {skipped:,} from existing historical)")
 
-    # Create output directory
-    parquet_dir = output_dir / "parquet"
-    parquet_dir.mkdir(parents=True, exist_ok=True)
+    if not all_rows:
+        logger.warning("No new rows to write")
+        return {}
 
     results = {}
 
-    # 1. Write partitioned dataset (by year)
+    # 1. Write partitioned dataset (by year) - only for years we processed
     logger.info("\n--- Writing Partitioned Dataset (by year) ---")
     partitioned_dir = parquet_dir / "daily_analytics"
     write_parquet_partitioned(all_rows, partitioned_dir, "year", logger)
     results["daily_analytics (partitioned)"] = len(all_rows)
 
-    # 2. Write single combined file
-    logger.info("\n--- Writing Combined File ---")
-    combined_path = parquet_dir / "daily_analytics_all.parquet"
-    write_parquet_single(all_rows, combined_path, logger)
-    results["daily_analytics_all.parquet"] = len(all_rows)
-
-    # 3. Write per-year files (non-partitioned, for simpler PowerBI import)
+    # 2. Write per-year files (only for years we processed)
     logger.info("\n--- Writing Per-Year Files ---")
     for year in sorted(rows_by_year.keys()):
         year_rows = rows_by_year[year]
@@ -399,13 +452,38 @@ def process_checkpoints_streaming(
         write_parquet_single(year_rows, year_path, logger)
         results[f"daily_analytics_{year}.parquet"] = len(year_rows)
 
-    # 4. Write per-category files
+    # 3. Write per-category files (only include processed data)
     logger.info("\n--- Writing Per-Category Files ---")
     for category in sorted(rows_by_category.keys()):
         cat_rows = rows_by_category[category]
         cat_path = parquet_dir / f"daily_analytics_{category}.parquet"
         write_parquet_single(cat_rows, cat_path, logger)
         results[f"daily_analytics_{category}.parquet"] = len(cat_rows)
+
+    # 4. Write combined file - needs special handling for incremental mode
+    logger.info("\n--- Writing Combined File ---")
+    if years_to_skip:
+        # In incremental mode, we need to merge with existing data
+        logger.info("Merging new data with existing historical parquet files...")
+        combined_rows = list(all_rows)  # Start with newly processed rows
+
+        # Load existing parquet files for skipped years
+        for year in sorted(years_to_skip):
+            existing_path = parquet_dir / f"daily_analytics_{year}.parquet"
+            if existing_path.exists():
+                existing_df = pd.read_parquet(existing_path)
+                existing_records = existing_df.to_dict('records')
+                combined_rows.extend(existing_records)
+                logger.info(f"  Loaded {len(existing_records):,} rows from existing {year} file")
+
+        combined_path = parquet_dir / "daily_analytics_all.parquet"
+        write_parquet_single(combined_rows, combined_path, logger)
+        results["daily_analytics_all.parquet"] = len(combined_rows)
+    else:
+        # Full mode - just write all processed rows
+        combined_path = parquet_dir / "daily_analytics_all.parquet"
+        write_parquet_single(all_rows, combined_path, logger)
+        results["daily_analytics_all.parquet"] = len(all_rows)
 
     return results
 
@@ -414,7 +492,23 @@ def process_checkpoints_streaming(
 # MAIN
 # =============================================================================
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Convert checkpoint data to Parquet format for PowerBI"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force regeneration of all parquet files (including historical)"
+    )
+    return parser.parse_args()
+
+
 def main():
+    # Parse arguments
+    args = parse_args()
+
     # Check dependencies
     try:
         import pandas as pd
@@ -434,7 +528,16 @@ def main():
 
     # Load configuration
     config = load_config()
+    settings = config['settings']
     categories = config['accounts'].get('categories', {})
+
+    # Get historical years and current year from settings
+    historical_years = set(settings.get('years', {}).get('historical', [2024, 2025]))
+    current_year = settings.get('years', {}).get('current', datetime.now().year)
+
+    logger.info(f"Historical years: {sorted(historical_years)}")
+    logger.info(f"Current year: {current_year}")
+    logger.info(f"Force mode: {args.force}")
 
     # Build channel -> category mapping
     channel_to_category = {}
@@ -471,6 +574,9 @@ def main():
         checkpoint_files=checkpoint_files,
         output_dir=paths['root'],
         channel_to_category=channel_to_category,
+        historical_years=historical_years,
+        current_year=current_year,
+        force=args.force,
         logger=logger
     )
 
@@ -479,32 +585,35 @@ def main():
     logger.info("Parquet conversion completed!")
     logger.info("=" * 60)
 
-    logger.info("\nOutput files:")
-    for filename, count in results.items():
-        logger.info(f"  {filename}: {count:,} rows")
+    if results:
+        logger.info("\nOutput files:")
+        for filename, count in results.items():
+            logger.info(f"  {filename}: {count:,} rows")
 
-    # Calculate total size
-    parquet_dir = paths['root'] / "output" / "parquet"
-    total_size = sum(f.stat().st_size for f in parquet_dir.rglob("*.parquet"))
-    total_size_mb = total_size / (1024 * 1024)
+        # Calculate total size
+        parquet_dir = paths['root'] / "output" / "parquet"
+        total_size = sum(f.stat().st_size for f in parquet_dir.rglob("*.parquet"))
+        total_size_mb = total_size / (1024 * 1024)
 
-    logger.info(f"\nTotal Parquet size: {total_size_mb:.1f} MB")
-    logger.info(f"Output directory: {parquet_dir}")
+        logger.info(f"\nTotal Parquet size: {total_size_mb:.1f} MB")
+        logger.info(f"Output directory: {parquet_dir}")
 
-    logger.info("\n" + "-" * 60)
-    logger.info("PowerBI Import Instructions:")
-    logger.info("-" * 60)
-    logger.info("Option 1: Single file (simplest)")
-    logger.info(f"  → Import: {parquet_dir}/daily_analytics_all.parquet")
-    logger.info("")
-    logger.info("Option 2: Partitioned (fastest for filtered queries)")
-    logger.info(f"  → Import folder: {parquet_dir}/daily_analytics/")
-    logger.info("  → PowerBI will auto-detect year partitions")
-    logger.info("")
-    logger.info("Option 3: Per-year files (balanced)")
-    logger.info(f"  → Import: {parquet_dir}/daily_analytics_2024.parquet")
-    logger.info(f"  → Import: {parquet_dir}/daily_analytics_2025.parquet")
-    logger.info(f"  → Import: {parquet_dir}/daily_analytics_2026.parquet")
+        logger.info("\n" + "-" * 60)
+        logger.info("PowerBI Import Instructions:")
+        logger.info("-" * 60)
+        logger.info("Option 1: Single file (simplest)")
+        logger.info(f"  → Import: {parquet_dir}/daily_analytics_all.parquet")
+        logger.info("")
+        logger.info("Option 2: Partitioned (fastest for filtered queries)")
+        logger.info(f"  → Import folder: {parquet_dir}/daily_analytics/")
+        logger.info("  → PowerBI will auto-detect year partitions")
+        logger.info("")
+        logger.info("Option 3: Per-year files (balanced)")
+        logger.info(f"  → Import: {parquet_dir}/daily_analytics_2024.parquet")
+        logger.info(f"  → Import: {parquet_dir}/daily_analytics_2025.parquet")
+        logger.info(f"  → Import: {parquet_dir}/daily_analytics_2026.parquet")
+    else:
+        logger.info("No files were written.")
 
 
 if __name__ == "__main__":
