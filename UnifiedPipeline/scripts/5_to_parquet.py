@@ -26,6 +26,16 @@ Output:
     - output/parquet/daily_analytics/ (partitioned by year)
     - output/parquet/daily_analytics_all.parquet (single file)
     - output/parquet/daily_analytics_{category}.parquet (per category)
+    - output/parquet/video_metadata.parquet (dimension table - one row per video)
+
+Star Schema for PowerBI:
+    - Fact table: daily_analytics (metrics per video per day)
+      → Only contains: video_id, date, year, metrics, original_filename
+      → Does NOT contain: video_duration, name, channel, account_id, etc.
+    - Dimension table: video_metadata (one row per video with duration, name, etc.)
+      → Contains: video_id, video_duration, video_duration_seconds, name, channel, etc.
+    - Join on: video_id
+    - This prevents SUM(video_duration) issues when aggregating
 
 Usage:
     python 5_to_parquet.py          # Incremental: only current year
@@ -90,6 +100,38 @@ OUTPUT_FIELDS = [
     "year",
 ]
 
+# Dimension table fields (video metadata - one row per video)
+DIMENSION_FIELDS = [
+    "video_id", "account_id", "channel", "name",
+    "video_duration", "video_duration_seconds",  # Both ms and seconds
+    "created_at", "published_at", "original_filename", "created_by",
+    "video_content_type", "video_length", "video_category",
+    "country", "language", "business_unit",
+    "tags", "reference_id",
+    # Harper custom fields
+    "cf_relatedlinkname", "cf_relatedlink", "cf_video_owner_email",
+    "cf_1a_comms_sign_off", "cf_1b_comms_sign_off_approver",
+    "cf_2a_data_classification_disclaimer", "cf_3a_records_management_disclaimer",
+    "cf_4a_archiving_disclaimer_comms_branding", "cf_4b_unique_sharepoint_id",
+]
+
+# Fact table fields (daily metrics - many rows per video)
+# Note: Metadata fields are in video_metadata.parquet, join via video_id
+FACT_FIELDS = [
+    "video_id",  # Join key to video_metadata
+    "date", "year",
+    # Metrics (change daily)
+    "video_view", "views_desktop", "views_mobile", "views_tablet", "views_other",
+    "video_impression", "play_rate", "engagement_score",
+    "video_engagement_1", "video_engagement_25", "video_engagement_50",
+    "video_engagement_75", "video_engagement_100",
+    "video_percent_viewed", "video_seconds_viewed",
+    # Kept for convenience (user request)
+    "original_filename",
+    # Meta
+    "dt_last_viewed", "report_generated_on",
+]
+
 # Column data types for Parquet
 COLUMN_DTYPES = {
     # String columns
@@ -132,8 +174,11 @@ COLUMN_DTYPES = {
     "views_other": "Int64",
     "video_impression": "Int64",
     "video_seconds_viewed": "Int64",
-    "video_duration": "Int64",
+    "video_duration": "Int64",  # Duration in milliseconds (from API)
     "year": "Int64",
+
+    # Float columns (derived)
+    "video_duration_seconds": "float64",  # Duration in seconds (for convenience)
 
     # Float columns
     "play_rate": "float64",
@@ -216,12 +261,32 @@ def process_row(row: Dict) -> Dict:
     date_str = row.get("date", "")
     row["year"] = extract_year(date_str)
 
+    # Add video_duration_seconds (convert from milliseconds)
+    duration_ms = row.get("video_duration")
+    if duration_ms is not None:
+        try:
+            row["video_duration_seconds"] = float(duration_ms) / 1000.0
+        except (TypeError, ValueError):
+            row["video_duration_seconds"] = None
+    else:
+        row["video_duration_seconds"] = None
+
     # Ensure all expected fields exist
     for field in OUTPUT_FIELDS:
         if field not in row:
             row[field] = None
 
     return row
+
+
+def extract_dimension_row(row: Dict) -> Dict:
+    """Extract dimension table fields from a row."""
+    return {field: row.get(field) for field in DIMENSION_FIELDS}
+
+
+def extract_fact_row(row: Dict) -> Dict:
+    """Extract fact table fields from a row."""
+    return {field: row.get(field) for field in FACT_FIELDS}
 
 
 # =============================================================================
@@ -400,6 +465,9 @@ def process_checkpoints_streaming(
     rows_by_year = defaultdict(list)
     rows_by_category = defaultdict(list)
 
+    # Video metadata accumulator (keyed by video_id, keeps most recent)
+    video_metadata = {}
+
     processed = 0
     skipped = 0
 
@@ -413,16 +481,24 @@ def process_checkpoints_streaming(
             year = row.get("year")
             channel = row.get("channel", "")
             category = channel_to_category.get(channel, "other")
+            video_id = row.get("video_id")
+
+            # Always update video metadata (regardless of year skipping)
+            # This ensures dimension table has all videos
+            if video_id:
+                video_metadata[video_id] = extract_dimension_row(row)
 
             # Skip rows from years we don't need to regenerate
             if year in years_to_skip:
                 skipped += 1
                 continue
 
-            all_rows.append(row)
+            # Extract only fact fields for fact table outputs
+            fact_row = extract_fact_row(row)
+            all_rows.append(fact_row)
             if year:
-                rows_by_year[year].append(row)
-            rows_by_category[category].append(row)
+                rows_by_year[year].append(fact_row)
+            rows_by_category[category].append(fact_row)
 
             processed += 1
 
@@ -431,9 +507,10 @@ def process_checkpoints_streaming(
                 logger.info(f"  Processed {processed:,} rows (skipped {skipped:,} from existing years)")
 
     logger.info(f"\nTotal rows to write: {processed:,} (skipped {skipped:,} from existing historical)")
+    logger.info(f"Unique videos found: {len(video_metadata):,}")
 
-    if not all_rows:
-        logger.warning("No new rows to write")
+    if not all_rows and not video_metadata:
+        logger.warning("No data to write")
         return {}
 
     results = {}
@@ -484,6 +561,16 @@ def process_checkpoints_streaming(
         combined_path = parquet_dir / "daily_analytics_all.parquet"
         write_parquet_single(all_rows, combined_path, logger)
         results["daily_analytics_all.parquet"] = len(all_rows)
+
+    # 5. Write video metadata dimension table (always regenerated)
+    logger.info("\n--- Writing Video Metadata Dimension Table ---")
+    if video_metadata:
+        metadata_rows = list(video_metadata.values())
+        metadata_path = parquet_dir / "video_metadata.parquet"
+        write_parquet_single(metadata_rows, metadata_path, logger)
+        results["video_metadata.parquet"] = len(metadata_rows)
+        logger.info(f"  → Use this table for video_duration (one row per video)")
+        logger.info(f"  → Join with daily_analytics on video_id")
 
     return results
 
@@ -601,17 +688,21 @@ def main():
         logger.info("\n" + "-" * 60)
         logger.info("PowerBI Import Instructions:")
         logger.info("-" * 60)
-        logger.info("Option 1: Single file (simplest)")
-        logger.info(f"  → Import: {parquet_dir}/daily_analytics_all.parquet")
         logger.info("")
-        logger.info("Option 2: Partitioned (fastest for filtered queries)")
-        logger.info(f"  → Import folder: {parquet_dir}/daily_analytics/")
-        logger.info("  → PowerBI will auto-detect year partitions")
+        logger.info("RECOMMENDED: Star Schema (prevents SUM aggregation issues)")
+        logger.info("  1. Import: video_metadata.parquet (Dimension Table)")
+        logger.info("     → One row per video with: duration, name, channel, account_id, etc.")
+        logger.info("     → video_duration_seconds already converted from ms")
+        logger.info("  2. Import: daily_analytics_all.parquet (Fact Table)")
+        logger.info("     → Daily metrics per video (no duplicate metadata fields)")
+        logger.info("     → Contains: video_id, date, metrics, original_filename")
+        logger.info("  3. Create relationship: video_id (many-to-one)")
+        logger.info("  4. Use fields from Dimension Table for name, duration, channel, etc.")
         logger.info("")
-        logger.info("Option 3: Per-year files (balanced)")
-        logger.info(f"  → Import: {parquet_dir}/daily_analytics_2024.parquet")
-        logger.info(f"  → Import: {parquet_dir}/daily_analytics_2025.parquet")
-        logger.info(f"  → Import: {parquet_dir}/daily_analytics_2026.parquet")
+        logger.info("File options for Fact Table:")
+        logger.info(f"  - Single file: {parquet_dir}/daily_analytics_all.parquet")
+        logger.info(f"  - Partitioned: {parquet_dir}/daily_analytics/ (by year)")
+        logger.info(f"  - Per-year:    {parquet_dir}/daily_analytics_{{year}}.parquet")
     else:
         logger.info("No files were written.")
 
