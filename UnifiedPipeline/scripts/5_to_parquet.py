@@ -636,23 +636,28 @@ def main():
         for account in category_config.get('accounts', []):
             channel_to_category[account] = category_name
 
-    # Find checkpoint files
+    # Find checkpoint files (including account-specific files for parallel processing)
     checkpoint_files = []
 
-    historical_path = paths['checkpoints'] / "daily_historical.jsonl"
-    current_path = paths['checkpoints'] / "daily_current.jsonl"
+    # Find all historical checkpoint files (main + account-specific)
+    # Patterns: daily_historical.jsonl, daily_historical_Internet.jsonl, etc.
+    historical_files = sorted(paths['checkpoints'].glob("daily_historical*.jsonl"))
 
-    if historical_path.exists():
-        checkpoint_files.append(historical_path)
-        size_mb = historical_path.stat().st_size / (1024 * 1024)
-        logger.info(f"Found historical checkpoint: {size_mb:.1f} MB")
+    if historical_files:
+        for hist_file in historical_files:
+            checkpoint_files.append(hist_file)
+            size_mb = hist_file.stat().st_size / (1024 * 1024)
+            logger.info(f"Found historical checkpoint: {hist_file.name} ({size_mb:.1f} MB)")
     else:
         logger.warning("No historical checkpoint found")
+
+    # Find current checkpoint
+    current_path = paths['checkpoints'] / "daily_current.jsonl"
 
     if current_path.exists():
         checkpoint_files.append(current_path)
         size_mb = current_path.stat().st_size / (1024 * 1024)
-        logger.info(f"Found current checkpoint: {size_mb:.1f} MB")
+        logger.info(f"Found current checkpoint: {current_path.name} ({size_mb:.1f} MB)")
     else:
         logger.warning("No current checkpoint found")
 

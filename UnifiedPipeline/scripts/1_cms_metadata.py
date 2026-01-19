@@ -30,6 +30,7 @@ Output:
 import sys
 import csv
 import json
+import argparse
 from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
@@ -248,7 +249,28 @@ def write_csv_output(videos: list, output_path: Path, logger):
 # MAIN
 # =============================================================================
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Fetch CMS metadata for all Brightcove accounts",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+This script fetches complete video metadata (including custom fields) for all accounts.
+
+IMPORTANT: Run this script at EVERY execution to capture newly created videos!
+
+Output:
+    - output/cms/{account}_cms_metadata.json (full API response)
+    - output/cms/{account}_cms_metadata.csv (flattened with custom fields)
+        """
+    )
+    return parser.parse_args()
+
+
 def main():
+    # Parse arguments (enables --help)
+    parse_args()
+
     # Setup
     paths = get_output_paths()
     logger = setup_logging(paths['logs'], SCRIPT_NAME)

@@ -24,6 +24,7 @@ Features:
     - Auto-detection: skips historical years if already completed
     - JSONL checkpoint for granular resume
     - Device breakdown (desktop, mobile, tablet, other)
+    - --account flag for parallel processing of single accounts
 
 Input:
     - output/analytics/{account}_cms_enriched.json (from script 2)
@@ -31,12 +32,21 @@ Input:
     - config/settings.json (year configuration)
 
 Output:
-    - checkpoints/daily_historical.jsonl (2024 + 2025 data, run once)
+    - checkpoints/daily_historical.jsonl (2024 + 2025 data, all accounts)
+    - checkpoints/daily_historical_{account}.jsonl (when --account is used)
     - checkpoints/daily_current.jsonl (2026 data, incremental)
+
+Parallel Processing:
+    To run multiple accounts in parallel, use separate terminals:
+        Terminal 1: python 3_daily_analytics.py --account Internet
+        Terminal 2: python 3_daily_analytics.py --account Intranet
+        Terminal 3: python 3_daily_analytics.py --account Harper
+    Each account writes to its own checkpoint file, avoiding conflicts.
 """
 
 import sys
 import json
+import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -326,15 +336,24 @@ def process_historical_years(
     retry_config: RetryConfig,
     proxies: dict,
     paths: Dict,
-    logger
+    logger,
+    checkpoint_path: Path = None,
+    status_path: Path = None
 ) -> int:
     """
     Process historical years (all videos, no 90-day filter).
 
+    Args:
+        checkpoint_path: Optional custom path for checkpoint file (for parallel processing)
+        status_path: Optional custom path for status file (for parallel processing)
+
     Returns total rows written.
     """
-    checkpoint_path = paths['checkpoints'] / "daily_historical.jsonl"
-    status_path = paths['checkpoints'] / "historical_status.json"
+    # Use provided paths or defaults
+    if checkpoint_path is None:
+        checkpoint_path = paths['checkpoints'] / "daily_historical.jsonl"
+    if status_path is None:
+        status_path = paths['checkpoints'] / "historical_status.json"
 
     # Check if already completed
     status = load_checkpoint(status_path) or {"completed_accounts": {}}
@@ -595,7 +614,37 @@ def process_current_year(
 # MAIN
 # =============================================================================
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Fetch daily analytics per video from Brightcove API",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Parallel Processing:
+    To run multiple accounts in parallel, use separate terminals:
+        Terminal 1: python 3_daily_analytics.py --account Internet
+        Terminal 2: python 3_daily_analytics.py --account Intranet
+        Terminal 3: python 3_daily_analytics.py --account Harper
+    Each account writes to its own checkpoint file, avoiding write conflicts.
+        """
+    )
+    parser.add_argument(
+        '--account',
+        type=str,
+        help='Process only this account (enables parallel processing with separate checkpoint files)'
+    )
+    parser.add_argument(
+        '--historical-only',
+        action='store_true',
+        help='Only process historical data (skip current year)'
+    )
+    return parser.parse_args()
+
+
 def main():
+    # Parse arguments
+    args = parse_args()
+
     # Setup
     paths = get_output_paths()
     logger = setup_logging(paths['logs'], SCRIPT_NAME)
@@ -627,13 +676,34 @@ def main():
     )
 
     retry_config = RetryConfig.from_settings(settings)
-    accounts = config['accounts']['accounts']
+    all_accounts = config['accounts']['accounts']
+
+    # Filter to single account if --account is specified
+    single_account_mode = args.account is not None
+    if single_account_mode:
+        if args.account not in all_accounts:
+            logger.error(f"Account '{args.account}' not found. Available: {list(all_accounts.keys())}")
+            return
+        accounts = {args.account: all_accounts[args.account]}
+        logger.info(f"Single account mode: {args.account}")
+    else:
+        accounts = all_accounts
+
+    # Determine checkpoint file paths based on mode
+    if single_account_mode:
+        # Account-specific files for parallel processing
+        checkpoint_path = paths['checkpoints'] / f"daily_historical_{args.account}.jsonl"
+        status_path = paths['checkpoints'] / f"historical_status_{args.account}.json"
+        logger.info(f"Using account-specific checkpoint: {checkpoint_path.name}")
+    else:
+        # Default files (original behavior)
+        checkpoint_path = paths['checkpoints'] / "daily_historical.jsonl"
+        status_path = paths['checkpoints'] / "historical_status.json"
 
     # Check if historical data needs processing
-    status_path = paths['checkpoints'] / "historical_status.json"
     status = load_checkpoint(status_path) or {"completed_accounts": {}}
 
-    # Check if all historical years are done for all accounts
+    # Check if all historical years are done for selected accounts
     all_historical_done = True
     for account_name in accounts.keys():
         account_status = status.get("completed_accounts", {}).get(account_name, {})
@@ -658,30 +728,34 @@ def main():
             retry_config=retry_config,
             proxies=proxies,
             paths=paths,
-            logger=logger
+            logger=logger,
+            checkpoint_path=checkpoint_path,
+            status_path=status_path
         )
     else:
         logger.info("Historical data already complete - skipping")
         # Count existing historical rows
-        hist_path = paths['checkpoints'] / "daily_historical.jsonl"
-        if hist_path.exists():
-            total_historical = len(load_checkpoint_jsonl(hist_path))
+        if checkpoint_path.exists():
+            total_historical = len(load_checkpoint_jsonl(checkpoint_path))
 
-    # Always process current year
-    logger.info("\n" + "=" * 60)
-    logger.info(f"PHASE 2: Processing CURRENT year ({current_year})")
-    logger.info("=" * 60)
+    # Process current year (unless --historical-only)
+    if not args.historical_only:
+        logger.info("\n" + "=" * 60)
+        logger.info(f"PHASE 2: Processing CURRENT year ({current_year})")
+        logger.info("=" * 60)
 
-    total_current = process_current_year(
-        accounts=accounts,
-        current_year=current_year,
-        days_back_filter=days_back_filter,
-        auth_manager=auth_manager,
-        retry_config=retry_config,
-        proxies=proxies,
-        paths=paths,
-        logger=logger
-    )
+        total_current = process_current_year(
+            accounts=accounts,
+            current_year=current_year,
+            days_back_filter=days_back_filter,
+            auth_manager=auth_manager,
+            retry_config=retry_config,
+            proxies=proxies,
+            paths=paths,
+            logger=logger
+        )
+    else:
+        logger.info("Skipping current year (--historical-only)")
 
     # Summary
     logger.info("\n" + "=" * 60)
@@ -691,9 +765,13 @@ def main():
     logger.info(f"Current year data: {total_current} rows")
     logger.info(f"Total: {total_historical + total_current} rows")
     logger.info("\nCheckpoint files:")
-    logger.info(f"  - checkpoints/daily_historical.jsonl")
-    logger.info(f"  - checkpoints/daily_current.jsonl")
-    logger.info("\nRun 4_combine_output.py to generate final CSVs")
+    logger.info(f"  - {checkpoint_path.name}")
+    if not args.historical_only:
+        logger.info(f"  - checkpoints/daily_current.jsonl")
+    if single_account_mode:
+        logger.info(f"\nNote: Account-specific checkpoint used for parallel processing.")
+        logger.info(f"Scripts 4 and 5 will automatically merge all checkpoint files.")
+    logger.info("\nRun 4_combine_output.py or 5_to_parquet.py to generate output")
 
 
 if __name__ == "__main__":

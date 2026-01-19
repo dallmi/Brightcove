@@ -32,6 +32,7 @@ Output:
 
 import sys
 import json
+import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
@@ -581,7 +582,36 @@ def write_lifecycle_excel(
 # MAIN
 # =============================================================================
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Calculate last viewed date for all videos",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+This script calculates dt_last_viewed (all-time last view date) for all videos.
+
+IMPORTANT: Run this script at EVERY execution to update dt_last_viewed!
+    - New videos need their dt_last_viewed calculated
+    - Existing videos need their dt_last_viewed updated
+    - The 90-day filter in script 3 depends on accurate dt_last_viewed
+
+Features:
+    - Adaptive window strategy (monthly for large accounts, quarterly for others)
+    - Progressive window splitting on failures
+    - Per-account + per-window checkpointing
+
+Output:
+    - output/analytics/{account}_dt_last_viewed.json
+    - output/analytics/{account}_cms_enriched.json
+        """
+    )
+    return parser.parse_args()
+
+
 def main():
+    # Parse arguments (enables --help)
+    parse_args()
+
     # Setup
     paths = get_output_paths()
     logger = setup_logging(paths['logs'], SCRIPT_NAME)

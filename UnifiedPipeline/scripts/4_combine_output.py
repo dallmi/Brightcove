@@ -27,6 +27,7 @@ Output:
 
 import sys
 import csv
+import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List
@@ -116,7 +117,32 @@ def extract_year_from_date(date_str: str) -> str:
 # MAIN
 # =============================================================================
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Generate final CSV outputs from checkpoints",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+This script combines historical and current checkpoint data into final CSV outputs.
+
+Features:
+    - Merges all checkpoint files (including account-specific files)
+    - Generates separate CSVs by category and by year
+    - Proper column ordering matching Reporting + Harper fields
+
+Output:
+    - output/daily/daily_analytics_YYYY_all.csv (per year)
+    - output/daily/daily_analytics_YYYY_{category}.csv (per category)
+    - output/daily/daily_analytics_combined_all.csv
+        """
+    )
+    return parser.parse_args()
+
+
 def main():
+    # Parse arguments (enables --help)
+    parse_args()
+
     # Setup
     paths = get_output_paths()
     logger = setup_logging(paths['logs'], SCRIPT_NAME)
@@ -134,18 +160,23 @@ def main():
         for account in category_config.get('accounts', []):
             channel_to_category[account] = category_name
 
-    # Load both checkpoint files
-    historical_path = paths['checkpoints'] / "daily_historical.jsonl"
-    current_path = paths['checkpoints'] / "daily_current.jsonl"
-
+    # Load checkpoint files (including account-specific files for parallel processing)
     all_rows = []
 
-    if historical_path.exists():
-        historical_rows = load_checkpoint_jsonl(historical_path)
-        logger.info(f"Loaded {len(historical_rows)} historical rows")
-        all_rows.extend(historical_rows)
+    # Find all historical checkpoint files (main + account-specific)
+    # Patterns: daily_historical.jsonl, daily_historical_Internet.jsonl, etc.
+    historical_files = sorted(paths['checkpoints'].glob("daily_historical*.jsonl"))
+
+    if historical_files:
+        for hist_file in historical_files:
+            historical_rows = load_checkpoint_jsonl(hist_file)
+            logger.info(f"Loaded {len(historical_rows)} rows from {hist_file.name}")
+            all_rows.extend(historical_rows)
     else:
         logger.info("No historical checkpoint found")
+
+    # Load current checkpoint
+    current_path = paths['checkpoints'] / "daily_current.jsonl"
 
     if current_path.exists():
         current_rows = load_checkpoint_jsonl(current_path)
