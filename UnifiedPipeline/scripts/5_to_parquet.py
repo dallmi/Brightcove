@@ -23,10 +23,11 @@ Input:
     - config/accounts.json (for category grouping)
 
 Output:
-    - output/parquet/daily_analytics/ (partitioned by year)
-    - output/parquet/daily_analytics_all.parquet (single file)
-    - output/parquet/daily_analytics_{category}.parquet (per category)
-    - output/parquet/video_metadata.parquet (dimension table - one row per video)
+    - output/parquet/dimensions/video_metadata.parquet (dimension table - one row per video)
+    - output/parquet/facts/daily_analytics/ (partitioned by year)
+    - output/parquet/facts/daily_analytics_all.parquet (single file)
+    - output/parquet/facts/daily_analytics_{year}.parquet (per year)
+    - output/parquet/facts/daily_analytics_{category}.parquet (per category)
 
 Star Schema for PowerBI:
     - Fact table: daily_analytics (metrics per video per day)
@@ -440,10 +441,13 @@ def process_checkpoints_streaming(
     import pandas as pd
 
     parquet_dir = output_dir / "parquet"
-    parquet_dir.mkdir(parents=True, exist_ok=True)
+    facts_dir = parquet_dir / "facts"
+    dimensions_dir = parquet_dir / "dimensions"
+    facts_dir.mkdir(parents=True, exist_ok=True)
+    dimensions_dir.mkdir(parents=True, exist_ok=True)
 
     # Check which historical years already have parquet files
-    existing_years = get_existing_parquet_years(parquet_dir)
+    existing_years = get_existing_parquet_years(facts_dir)
 
     # Determine which years to skip
     if force:
@@ -517,25 +521,25 @@ def process_checkpoints_streaming(
 
     # 1. Write partitioned dataset (by year) - only for years we processed
     logger.info("\n--- Writing Partitioned Dataset (by year) ---")
-    partitioned_dir = parquet_dir / "daily_analytics"
+    partitioned_dir = facts_dir / "daily_analytics"
     write_parquet_partitioned(all_rows, partitioned_dir, "year", logger)
-    results["daily_analytics (partitioned)"] = len(all_rows)
+    results["facts/daily_analytics (partitioned)"] = len(all_rows)
 
     # 2. Write per-year files (only for years we processed)
     logger.info("\n--- Writing Per-Year Files ---")
     for year in sorted(rows_by_year.keys()):
         year_rows = rows_by_year[year]
-        year_path = parquet_dir / f"daily_analytics_{year}.parquet"
+        year_path = facts_dir / f"daily_analytics_{year}.parquet"
         write_parquet_single(year_rows, year_path, logger)
-        results[f"daily_analytics_{year}.parquet"] = len(year_rows)
+        results[f"facts/daily_analytics_{year}.parquet"] = len(year_rows)
 
     # 3. Write per-category files (only include processed data)
     logger.info("\n--- Writing Per-Category Files ---")
     for category in sorted(rows_by_category.keys()):
         cat_rows = rows_by_category[category]
-        cat_path = parquet_dir / f"daily_analytics_{category}.parquet"
+        cat_path = facts_dir / f"daily_analytics_{category}.parquet"
         write_parquet_single(cat_rows, cat_path, logger)
-        results[f"daily_analytics_{category}.parquet"] = len(cat_rows)
+        results[f"facts/daily_analytics_{category}.parquet"] = len(cat_rows)
 
     # 4. Write combined file - needs special handling for incremental mode
     logger.info("\n--- Writing Combined File ---")
@@ -546,29 +550,29 @@ def process_checkpoints_streaming(
 
         # Load existing parquet files for skipped years
         for year in sorted(years_to_skip):
-            existing_path = parquet_dir / f"daily_analytics_{year}.parquet"
+            existing_path = facts_dir / f"daily_analytics_{year}.parquet"
             if existing_path.exists():
                 existing_df = pd.read_parquet(existing_path)
                 existing_records = existing_df.to_dict('records')
                 combined_rows.extend(existing_records)
                 logger.info(f"  Loaded {len(existing_records):,} rows from existing {year} file")
 
-        combined_path = parquet_dir / "daily_analytics_all.parquet"
+        combined_path = facts_dir / "daily_analytics_all.parquet"
         write_parquet_single(combined_rows, combined_path, logger)
-        results["daily_analytics_all.parquet"] = len(combined_rows)
+        results["facts/daily_analytics_all.parquet"] = len(combined_rows)
     else:
         # Full mode - just write all processed rows
-        combined_path = parquet_dir / "daily_analytics_all.parquet"
+        combined_path = facts_dir / "daily_analytics_all.parquet"
         write_parquet_single(all_rows, combined_path, logger)
-        results["daily_analytics_all.parquet"] = len(all_rows)
+        results["facts/daily_analytics_all.parquet"] = len(all_rows)
 
     # 5. Write video metadata dimension table (always regenerated)
     logger.info("\n--- Writing Video Metadata Dimension Table ---")
     if video_metadata:
         metadata_rows = list(video_metadata.values())
-        metadata_path = parquet_dir / "video_metadata.parquet"
+        metadata_path = dimensions_dir / "video_metadata.parquet"
         write_parquet_single(metadata_rows, metadata_path, logger)
-        results["video_metadata.parquet"] = len(metadata_rows)
+        results["dimensions/video_metadata.parquet"] = len(metadata_rows)
         logger.info(f"  → Use this table for video_duration (one row per video)")
         logger.info(f"  → Join with daily_analytics on video_id")
 
@@ -690,19 +694,18 @@ def main():
         logger.info("-" * 60)
         logger.info("")
         logger.info("RECOMMENDED: Star Schema (prevents SUM aggregation issues)")
-        logger.info("  1. Import: video_metadata.parquet (Dimension Table)")
-        logger.info("     → One row per video with: duration, name, channel, account_id, etc.")
-        logger.info("     → video_duration_seconds already converted from ms")
-        logger.info("  2. Import: daily_analytics_all.parquet (Fact Table)")
-        logger.info("     → Daily metrics per video (no duplicate metadata fields)")
-        logger.info("     → Contains: video_id, date, metrics, original_filename")
+        logger.info("  1. Import from Folder: dimensions/")
+        logger.info("     → Contains: video_metadata.parquet (one row per video)")
+        logger.info("     → Fields: video_duration_seconds, name, channel, account_id, etc.")
+        logger.info("  2. Import from Folder: facts/")
+        logger.info("     → Contains: daily_analytics files (metrics per video per day)")
+        logger.info("     → Fields: video_id, date, video_view, engagement metrics, etc.")
         logger.info("  3. Create relationship: video_id (many-to-one)")
         logger.info("  4. Use fields from Dimension Table for name, duration, channel, etc.")
         logger.info("")
-        logger.info("File options for Fact Table:")
-        logger.info(f"  - Single file: {parquet_dir}/daily_analytics_all.parquet")
-        logger.info(f"  - Partitioned: {parquet_dir}/daily_analytics/ (by year)")
-        logger.info(f"  - Per-year:    {parquet_dir}/daily_analytics_{{year}}.parquet")
+        logger.info("Folder structure for PowerBI 'Import from Folder':")
+        logger.info(f"  - Dimensions: {parquet_dir}/dimensions/")
+        logger.info(f"  - Facts:      {parquet_dir}/facts/")
     else:
         logger.info("No files were written.")
 
