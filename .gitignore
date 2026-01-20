@@ -29,6 +29,15 @@ env/
 checkpoint_log.txt
 *_cache_*.json
 analytics_cache_*.json
+*.jsonl
+
+# Log files
+logs/
+*.log
+
+# Database files
+*.duckdb
+*.duckdb.wal
 
 # OS files
 .DS_Store
