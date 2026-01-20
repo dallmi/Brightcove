@@ -13,7 +13,7 @@ Usage:
 
     Optional flags:
         --dry-run    Show what would be migrated without actually migrating
-        --keep       Keep JSONL files after migration (default: delete)
+        --delete     Delete JSONL files after successful migration (default: keep)
 
 Input files (searched in output/checkpoints/):
     - *_daily_analytics_*.jsonl (historical format)
@@ -189,11 +189,11 @@ Example:
     # Preview what would be migrated
     python migrate_to_duckdb.py --dry-run
 
-    # Migrate and keep original files
-    python migrate_to_duckdb.py --keep
-
-    # Migrate and delete original files (default)
+    # Migrate (keeps original files by default)
     python migrate_to_duckdb.py
+
+    # Migrate and delete original files after success
+    python migrate_to_duckdb.py --delete
         """
     )
     parser.add_argument(
@@ -202,9 +202,9 @@ Example:
         help='Show what would be migrated without actually migrating'
     )
     parser.add_argument(
-        '--keep',
+        '--delete',
         action='store_true',
-        help='Keep JSONL files after migration (default: delete)'
+        help='Delete JSONL files after successful migration (default: keep)'
     )
     parser.add_argument(
         '--checkpoint-dir',
@@ -283,8 +283,8 @@ def main():
             files_migrated += 1
             logger.info(f"  Migrated {rows:,} rows")
 
-            # Delete source file unless --keep
-            if not args.keep and rows > 0:
+            # Delete source file only if --delete flag is set
+            if args.delete and rows > 0:
                 file_path.unlink()
                 logger.info(f"  Deleted: {file_path.name}")
 
@@ -310,9 +310,11 @@ def main():
 
     logger.info(f"\nOutput: {db_path}")
 
-    if not args.keep and total_migrated > 0:
+    if args.delete and total_migrated > 0:
         logger.info("\nOriginal JSONL files have been deleted.")
-        logger.info("Use --keep flag to preserve them in the future.")
+    elif total_migrated > 0:
+        logger.info("\nOriginal JSONL files have been preserved.")
+        logger.info("Use --delete flag to remove them after verifying migration.")
 
 
 if __name__ == "__main__":
