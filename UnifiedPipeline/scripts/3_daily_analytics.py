@@ -454,6 +454,9 @@ Examples:
 
     # Process specific years only
     python 3_daily_analytics.py --years 2025 2026
+
+    # Show database statistics only (no data collection)
+    python 3_daily_analytics.py --stats
         """
     )
     parser.add_argument(
@@ -467,7 +470,45 @@ Examples:
         nargs='+',
         help='Process only these years (default: all configured years)'
     )
+    parser.add_argument(
+        '--stats',
+        action='store_true',
+        help='Show database statistics and exit (no data collection)'
+    )
     return parser.parse_args()
+
+
+def print_db_stats(db_path, logger):
+    """Print database statistics and exit."""
+    import os
+
+    if not db_path.exists():
+        logger.info(f"Database not found: {db_path}")
+        return
+
+    conn = init_analytics_db(db_path)
+    stats = get_db_stats(conn)
+
+    # Get file size
+    file_size_mb = db_path.stat().st_size / (1024 * 1024)
+
+    logger.info("=" * 60)
+    logger.info("DATABASE STATISTICS")
+    logger.info("=" * 60)
+    logger.info(f"File: {db_path}")
+    logger.info(f"Size: {file_size_mb:.1f} MB")
+    logger.info(f"Total rows: {stats['total_rows']:,}")
+    logger.info(f"Unique videos: {stats['unique_videos']:,}")
+
+    if stats['date_range'][0]:
+        logger.info(f"Date range: {stats['date_range'][0]} to {stats['date_range'][1]}")
+
+    if stats['rows_by_account']:
+        logger.info("\nRows by account:")
+        for account_id, count in sorted(stats['rows_by_account'].items()):
+            logger.info(f"  {account_id}: {count:,}")
+
+    conn.close()
 
 
 def main():
@@ -477,6 +518,16 @@ def main():
     # Setup
     paths = get_output_paths()
     logger = setup_logging(paths['logs'], SCRIPT_NAME)
+
+    # Handle --stats flag (show stats and exit)
+    if args.stats:
+        if args.account:
+            db_path = paths['output'] / f"analytics_{args.account}.duckdb"
+        else:
+            db_path = paths['output'] / "analytics.duckdb"
+        print_db_stats(db_path, logger)
+        return
+
     logger.info("=" * 60)
     logger.info("Starting daily analytics collection (DuckDB mode)")
     logger.info("=" * 60)
