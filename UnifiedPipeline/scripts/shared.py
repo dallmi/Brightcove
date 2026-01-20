@@ -516,3 +516,331 @@ def get_output_paths() -> Dict[str, Path]:
         'checkpoints': root / 'checkpoints',
         'logs': root / 'logs'
     }
+
+
+# =============================================================================
+# DUCKDB CHECKPOINT UTILITIES
+# =============================================================================
+
+def get_analytics_db_path() -> Path:
+    """Get path to the central analytics DuckDB database."""
+    return get_output_paths()['output'] / "analytics.duckdb"
+
+
+def init_analytics_db(db_path: Optional[Path] = None) -> 'duckdb.DuckDBPyConnection':
+    """
+    Initialize the analytics DuckDB database with required tables.
+
+    Creates tables if they don't exist:
+    - daily_analytics: Daily video metrics (facts)
+    - video_metadata: Video metadata (dimensions)
+
+    Returns:
+        DuckDB connection
+    """
+    import duckdb
+
+    if db_path is None:
+        db_path = get_analytics_db_path()
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(db_path))
+
+    # Create daily_analytics table (facts) with composite primary key
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS daily_analytics (
+            -- Primary key columns
+            account_id VARCHAR NOT NULL,
+            video_id VARCHAR NOT NULL,
+            date DATE NOT NULL,
+
+            -- Identifiers
+            channel VARCHAR,
+            name VARCHAR,
+
+            -- View metrics
+            video_view INTEGER DEFAULT 0,
+            views_desktop INTEGER DEFAULT 0,
+            views_mobile INTEGER DEFAULT 0,
+            views_tablet INTEGER DEFAULT 0,
+            views_other INTEGER DEFAULT 0,
+
+            -- Engagement metrics
+            video_impression INTEGER DEFAULT 0,
+            play_rate DOUBLE DEFAULT 0,
+            engagement_score DOUBLE DEFAULT 0,
+            video_engagement_1 DOUBLE DEFAULT 0,
+            video_engagement_25 DOUBLE DEFAULT 0,
+            video_engagement_50 DOUBLE DEFAULT 0,
+            video_engagement_75 DOUBLE DEFAULT 0,
+            video_engagement_100 DOUBLE DEFAULT 0,
+            video_percent_viewed DOUBLE DEFAULT 0,
+            video_seconds_viewed INTEGER DEFAULT 0,
+
+            -- CMS metadata
+            created_at VARCHAR,
+            published_at VARCHAR,
+            original_filename VARCHAR,
+            created_by VARCHAR,
+            video_duration INTEGER,
+            video_content_type VARCHAR,
+            video_length VARCHAR,
+            video_category VARCHAR,
+            country VARCHAR,
+            language VARCHAR,
+            business_unit VARCHAR,
+            tags VARCHAR,
+            reference_id VARCHAR,
+            dt_last_viewed VARCHAR,
+
+            -- Harper additional fields
+            cf_relatedlinkname VARCHAR,
+            cf_relatedlink VARCHAR,
+            cf_video_owner_email VARCHAR,
+            cf_1a_comms_sign_off VARCHAR,
+            cf_1b_comms_sign_off_approver VARCHAR,
+            cf_2a_data_classification_disclaimer VARCHAR,
+            cf_3a_records_management_disclaimer VARCHAR,
+            cf_4a_archiving_disclaimer_comms_branding VARCHAR,
+            cf_4b_unique_sharepoint_id VARCHAR,
+
+            -- Meta columns
+            report_generated_on VARCHAR,
+            data_type VARCHAR,
+
+            -- Primary key constraint
+            PRIMARY KEY (account_id, video_id, date)
+        )
+    """)
+
+    # Create index for common queries
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_daily_analytics_video
+        ON daily_analytics (video_id, date)
+    """)
+
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_daily_analytics_account_date
+        ON daily_analytics (account_id, date)
+    """)
+
+    return conn
+
+
+def upsert_daily_analytics(
+    conn: 'duckdb.DuckDBPyConnection',
+    rows: List[Dict[str, Any]],
+    logger: Optional[logging.Logger] = None
+) -> int:
+    """
+    Upsert rows into daily_analytics table.
+
+    Uses INSERT OR REPLACE to handle duplicates (same account_id, video_id, date).
+
+    Args:
+        conn: DuckDB connection
+        rows: List of row dictionaries
+        logger: Optional logger
+
+    Returns:
+        Number of rows upserted
+    """
+    if not rows:
+        return 0
+
+    if logger is None:
+        logger = logging.getLogger('DuckDB')
+
+    # Define column order matching table schema
+    columns = [
+        'account_id', 'video_id', 'date', 'channel', 'name',
+        'video_view', 'views_desktop', 'views_mobile', 'views_tablet', 'views_other',
+        'video_impression', 'play_rate', 'engagement_score',
+        'video_engagement_1', 'video_engagement_25', 'video_engagement_50',
+        'video_engagement_75', 'video_engagement_100',
+        'video_percent_viewed', 'video_seconds_viewed',
+        'created_at', 'published_at', 'original_filename', 'created_by',
+        'video_duration', 'video_content_type', 'video_length', 'video_category',
+        'country', 'language', 'business_unit', 'tags', 'reference_id', 'dt_last_viewed',
+        'cf_relatedlinkname', 'cf_relatedlink', 'cf_video_owner_email',
+        'cf_1a_comms_sign_off', 'cf_1b_comms_sign_off_approver',
+        'cf_2a_data_classification_disclaimer', 'cf_3a_records_management_disclaimer',
+        'cf_4a_archiving_disclaimer_comms_branding', 'cf_4b_unique_sharepoint_id',
+        'report_generated_on', 'data_type'
+    ]
+
+    # Build INSERT OR REPLACE statement
+    placeholders = ', '.join(['?' for _ in columns])
+    column_names = ', '.join(columns)
+
+    sql = f"""
+        INSERT OR REPLACE INTO daily_analytics ({column_names})
+        VALUES ({placeholders})
+    """
+
+    # Convert rows to tuples
+    values = []
+    for row in rows:
+        row_tuple = tuple(row.get(col, None) for col in columns)
+        values.append(row_tuple)
+
+    # Execute batch insert
+    conn.executemany(sql, values)
+
+    return len(rows)
+
+
+def get_max_date_for_video(
+    conn: 'duckdb.DuckDBPyConnection',
+    account_id: str,
+    video_id: str
+) -> Optional[str]:
+    """
+    Get the maximum date for a video in the database.
+
+    Used for incremental updates with overlap.
+
+    Returns:
+        Date string (YYYY-MM-DD) or None if no data exists
+    """
+    result = conn.execute("""
+        SELECT MAX(date)::VARCHAR
+        FROM daily_analytics
+        WHERE account_id = ? AND video_id = ?
+    """, [account_id, video_id]).fetchone()
+
+    return result[0] if result and result[0] else None
+
+
+def get_all_video_max_dates(
+    conn: 'duckdb.DuckDBPyConnection',
+    account_id: Optional[str] = None
+) -> Dict[Tuple[str, str], str]:
+    """
+    Get max dates for all videos in the database.
+
+    Args:
+        conn: DuckDB connection
+        account_id: Optional filter by account
+
+    Returns:
+        Dict mapping (account_id, video_id) -> max_date
+    """
+    if account_id:
+        result = conn.execute("""
+            SELECT account_id, video_id, MAX(date)::VARCHAR as max_date
+            FROM daily_analytics
+            WHERE account_id = ?
+            GROUP BY account_id, video_id
+        """, [account_id]).fetchall()
+    else:
+        result = conn.execute("""
+            SELECT account_id, video_id, MAX(date)::VARCHAR as max_date
+            FROM daily_analytics
+            GROUP BY account_id, video_id
+        """).fetchall()
+
+    return {(row[0], row[1]): row[2] for row in result}
+
+
+def get_db_stats(conn: 'duckdb.DuckDBPyConnection') -> Dict[str, Any]:
+    """
+    Get statistics about the database.
+
+    Returns dict with:
+    - total_rows: Total rows in daily_analytics
+    - unique_videos: Number of unique videos
+    - date_range: (min_date, max_date)
+    - rows_by_account: Dict of account -> row_count
+    """
+    stats = {}
+
+    # Total rows
+    result = conn.execute("SELECT COUNT(*) FROM daily_analytics").fetchone()
+    stats['total_rows'] = result[0] if result else 0
+
+    # Unique videos
+    result = conn.execute("SELECT COUNT(DISTINCT video_id) FROM daily_analytics").fetchone()
+    stats['unique_videos'] = result[0] if result else 0
+
+    # Date range
+    result = conn.execute("""
+        SELECT MIN(date)::VARCHAR, MAX(date)::VARCHAR FROM daily_analytics
+    """).fetchone()
+    stats['date_range'] = (result[0], result[1]) if result else (None, None)
+
+    # Rows by account
+    result = conn.execute("""
+        SELECT account_id, COUNT(*) as cnt
+        FROM daily_analytics
+        GROUP BY account_id
+    """).fetchall()
+    stats['rows_by_account'] = {row[0]: row[1] for row in result}
+
+    return stats
+
+
+def export_to_parquet(
+    conn: 'duckdb.DuckDBPyConnection',
+    output_dir: Path,
+    logger: Optional[logging.Logger] = None
+) -> Dict[str, Path]:
+    """
+    Export daily_analytics to Parquet files.
+
+    Creates:
+    - facts/daily_analytics_all.parquet
+    - dimensions/video_metadata.parquet (aggregated from CMS)
+
+    Returns:
+        Dict mapping table name to output path
+    """
+    if logger is None:
+        logger = logging.getLogger('DuckDB')
+
+    output_dir = Path(output_dir)
+    facts_dir = output_dir / 'facts'
+    facts_dir.mkdir(parents=True, exist_ok=True)
+
+    facts_path = facts_dir / 'daily_analytics_all.parquet'
+
+    # Export facts
+    conn.execute(f"""
+        COPY (SELECT * FROM daily_analytics ORDER BY account_id, video_id, date)
+        TO '{facts_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
+    """)
+
+    logger.info(f"Exported daily_analytics to {facts_path}")
+
+    return {'daily_analytics': facts_path}
+
+
+def calculate_overlap_start_date(
+    last_processed_date: Optional[str],
+    year_start: str,
+    overlap_days: int = 7
+) -> str:
+    """
+    Calculate the start date for fetching with overlap.
+
+    For lag compensation, starts N days before the last processed date.
+
+    Args:
+        last_processed_date: Last date in checkpoint (YYYY-MM-DD) or None
+        year_start: Start of year (YYYY-MM-DD)
+        overlap_days: Number of days to overlap (default 7)
+
+    Returns:
+        Start date string (YYYY-MM-DD)
+    """
+    if not last_processed_date:
+        return year_start
+
+    last_dt = datetime.strptime(last_processed_date, "%Y-%m-%d")
+    overlap_dt = last_dt - timedelta(days=overlap_days)
+    year_start_dt = datetime.strptime(year_start, "%Y-%m-%d")
+
+    # Don't go before year start
+    start_dt = max(overlap_dt, year_start_dt)
+
+    return start_dt.strftime("%Y-%m-%d")

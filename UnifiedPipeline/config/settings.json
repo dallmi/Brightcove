@@ -25,6 +25,7 @@
     "historical_years": [2024, 2025],
     "current_year": 2026,
     "days_back_filter": 90,
+    "overlap_days": 7,
     "mode": "auto"
   },
   "output": {

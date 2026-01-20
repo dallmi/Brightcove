@@ -3,28 +3,29 @@
 
 Purpose:
     Fetches detailed daily analytics (views, engagement, device breakdown)
-    with different strategies for historical vs. current year data.
+    for all videos across all configured years.
 
 Strategy:
-    - Historical years (2024, 2025): Fetch ALL videos, run ONCE (first execution only)
-    - Current year (2026): Only videos with views in last 90 days, run incrementally
+    - Unified approach: ALL videos for ALL years (no 90-day filter)
+    - Incremental updates with 7-day overlap for Brightcove lag compensation
+    - DuckDB-based checkpointing with upsert support
+    - Account-specific DB files for parallel processing
 
 Runtime:
-    - First run (historical + current): ~4-8 hours
-    - Subsequent runs (current only): ~30-60 minutes
+    - First run: ~4-8 hours (all historical data)
+    - Subsequent runs: ~30-60 minutes (incremental with overlap)
 
-Run frequency: Every execution, but historical data is auto-skipped after first run
+Run frequency: Monthly/Weekly/Daily (flexible)
 
 Prerequisites: Scripts 1 and 2 MUST run before this script at every execution!
     - 1_cms_metadata.py captures new videos
-    - 2_dt_last_viewed.py updates dt_last_viewed for 90-day filtering
+    - 2_dt_last_viewed.py updates dt_last_viewed
 
 Features:
-    - Separate checkpoints for historical vs. current data
-    - Auto-detection: skips historical years if already completed
-    - JSONL checkpoint for granular resume
+    - DuckDB checkpoint for atomic upserts (handles duplicates)
+    - 7-day overlap to compensate for Brightcove's 24-72h analytics lag
+    - --account flag for parallel processing with separate DB files
     - Device breakdown (desktop, mobile, tablet, other)
-    - --account flag for parallel processing of single accounts
 
 Input:
     - output/analytics/{account}_cms_enriched.json (from script 2)
@@ -32,16 +33,17 @@ Input:
     - config/settings.json (year configuration)
 
 Output:
-    - checkpoints/daily_historical.jsonl (2024 + 2025 data, all accounts)
-    - checkpoints/daily_historical_{account}.jsonl (when --account is used)
-    - checkpoints/daily_current.jsonl (2026 data, incremental)
+    - output/analytics.duckdb (central DB, without --account)
+    - output/analytics_{account}.duckdb (account-specific, with --account)
 
 Parallel Processing:
     To run multiple accounts in parallel, use separate terminals:
         Terminal 1: python 3_daily_analytics.py --account Internet
         Terminal 2: python 3_daily_analytics.py --account Intranet
         Terminal 3: python 3_daily_analytics.py --account Harper
-    Each account writes to its own checkpoint file, avoiding conflicts.
+
+    After all accounts complete, merge with:
+        python merge_analytics_dbs.py
 """
 
 import sys
@@ -49,7 +51,7 @@ import json
 import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from tqdm import tqdm
 
 # Add scripts directory to path for imports
@@ -63,10 +65,11 @@ from shared import (
     BrightcoveAuthManager,
     RetryConfig,
     robust_api_call,
-    load_checkpoint_jsonl,
-    append_checkpoint_line,
-    save_checkpoint_atomic,
-    load_checkpoint,
+    init_analytics_db,
+    upsert_daily_analytics,
+    get_all_video_max_dates,
+    get_db_stats,
+    calculate_overlap_start_date,
 )
 
 # =============================================================================
@@ -74,33 +77,6 @@ from shared import (
 # =============================================================================
 
 SCRIPT_NAME = "3_daily_analytics"
-
-# Output CSV fields (Reporting 32 + Harper additions)
-OUTPUT_FIELDS = [
-    # Core identifiers
-    "channel", "account_id", "video_id", "name", "date",
-    # View metrics
-    "video_view", "views_desktop", "views_mobile", "views_tablet", "views_other",
-    # Engagement metrics
-    "video_impression", "play_rate", "engagement_score",
-    "video_engagement_1", "video_engagement_25", "video_engagement_50",
-    "video_engagement_75", "video_engagement_100",
-    "video_percent_viewed", "video_seconds_viewed",
-    # CMS metadata
-    "created_at", "published_at", "original_filename", "created_by",
-    # Custom fields (standard)
-    "video_content_type", "video_length", "video_duration", "video_category",
-    "country", "language", "business_unit",
-    "tags", "reference_id",
-    # Harper additions
-    "dt_last_viewed",
-    "cf_relatedlinkname", "cf_relatedlink", "cf_video_owner_email",
-    "cf_1a_comms_sign_off", "cf_1b_comms_sign_off_approver",
-    "cf_2a_data_classification_disclaimer", "cf_3a_records_management_disclaimer",
-    "cf_4a_archiving_disclaimer_comms_branding", "cf_4b_unique_sharepoint_id",
-    # Meta
-    "report_generated_on", "data_type"
-]
 
 
 # =============================================================================
@@ -218,24 +194,6 @@ def fetch_daily_device_breakdown(
 # DATA PROCESSING
 # =============================================================================
 
-def build_video_max_date_map(checkpoint_rows: List[Dict]) -> Dict[Tuple[str, str], str]:
-    """
-    Build map of (account_id, video_id) -> max processed date.
-
-    Used to determine resume point.
-    """
-    max_dates = {}
-
-    for row in checkpoint_rows:
-        key = (row.get("account_id"), row.get("video_id"))
-        date = row.get("date")
-
-        if key not in max_dates or (date and date > max_dates[key]):
-            max_dates[key] = date
-
-    return max_dates
-
-
 def extract_video_metadata(video: Dict, account_name: str) -> Dict:
     """
     Extract CMS metadata from enriched video object.
@@ -326,201 +284,45 @@ def merge_analytics_with_metadata(
 
 
 # =============================================================================
-# HISTORICAL DATA PROCESSING (2024 + 2025)
+# YEAR PROCESSING
 # =============================================================================
 
-def process_historical_years(
+def process_year(
+    year: int,
     accounts: Dict,
-    historical_years: List[int],
     auth_manager: BrightcoveAuthManager,
     retry_config: RetryConfig,
     proxies: dict,
     paths: Dict,
-    logger,
-    checkpoint_path: Path = None,
-    status_path: Path = None
-) -> int:
-    """
-    Process historical years (all videos, no 90-day filter).
-
-    Args:
-        checkpoint_path: Optional custom path for checkpoint file (for parallel processing)
-        status_path: Optional custom path for status file (for parallel processing)
-
-    Returns total rows written.
-    """
-    # Use provided paths or defaults
-    if checkpoint_path is None:
-        checkpoint_path = paths['checkpoints'] / "daily_historical.jsonl"
-    if status_path is None:
-        status_path = paths['checkpoints'] / "historical_status.json"
-
-    # Check if already completed
-    status = load_checkpoint(status_path) or {"completed_accounts": {}}
-
-    # Load existing checkpoint
-    checkpoint_rows = load_checkpoint_jsonl(checkpoint_path)
-    video_max_dates = build_video_max_date_map(checkpoint_rows)
-
-    logger.info(f"Historical checkpoint: {len(checkpoint_rows)} existing rows")
-
-    total_rows = len(checkpoint_rows)
-    report_timestamp = datetime.now().isoformat()
-
-    for account_name, account_config in accounts.items():
-        account_id = account_config['account_id']
-
-        # Check if this account's historical data is complete
-        account_status = status["completed_accounts"].get(account_name, {})
-        completed_years = set(account_status.get("years", []))
-
-        for year in historical_years:
-            if year in completed_years:
-                logger.info(f"Skipping {account_name} {year} (already completed)")
-                continue
-
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Processing HISTORICAL: {account_name} {year}")
-            logger.info(f"{'='*60}")
-
-            # Load CMS data
-            cms_path = paths['analytics'] / f"{account_name}_cms_enriched.json"
-            if not cms_path.exists():
-                logger.warning(f"CMS not found: {cms_path}. Skipping.")
-                continue
-
-            with open(cms_path, 'r', encoding='utf-8') as f:
-                videos = json.load(f)
-
-            # For historical: ALL videos (no 90-day filter)
-            from_date = f"{year}-01-01"
-            to_date = f"{year}-12-31"
-
-            logger.info(f"Processing {len(videos)} videos for {from_date} to {to_date}")
-
-            rows_written = 0
-
-            for video in tqdm(videos, desc=f"{account_name} {year}"):
-                video_id = video.get("id")
-                key = (account_id, video_id)
-
-                # Determine start date (resume point)
-                last_processed = video_max_dates.get(key)
-                if last_processed and last_processed >= from_date and last_processed < to_date:
-                    start_date = (
-                        datetime.strptime(last_processed, "%Y-%m-%d") + timedelta(days=1)
-                    ).strftime("%Y-%m-%d")
-                elif last_processed and last_processed >= to_date:
-                    continue  # Already done for this year
-                else:
-                    start_date = from_date
-
-                if start_date > to_date:
-                    continue
-
-                try:
-                    # Fetch analytics
-                    summary = fetch_daily_summary(
-                        video_id=video_id,
-                        account_id=account_id,
-                        from_date=start_date,
-                        to_date=to_date,
-                        auth_manager=auth_manager,
-                        retry_config=retry_config,
-                        proxies=proxies,
-                        logger=logger
-                    )
-
-                    if not summary:
-                        continue
-
-                    device_breakdown = fetch_daily_device_breakdown(
-                        video_id=video_id,
-                        account_id=account_id,
-                        from_date=start_date,
-                        to_date=to_date,
-                        auth_manager=auth_manager,
-                        retry_config=retry_config,
-                        proxies=proxies,
-                        logger=logger
-                    )
-
-                    # Extract metadata
-                    metadata = extract_video_metadata(video, account_name)
-                    metadata["account_id"] = account_id
-
-                    # Merge and write rows
-                    rows = merge_analytics_with_metadata(
-                        summary, device_breakdown, metadata,
-                        report_timestamp, f"historical_{year}"
-                    )
-
-                    for row in rows:
-                        append_checkpoint_line(checkpoint_path, row)
-                        rows_written += 1
-                        video_max_dates[key] = row["date"]
-
-                except Exception as e:
-                    logger.warning(f"Failed video {video_id}: {e}")
-                    continue
-
-            total_rows += rows_written
-            logger.info(f"Completed {account_name} {year}: {rows_written} rows")
-
-            # Mark year as completed
-            if account_name not in status["completed_accounts"]:
-                status["completed_accounts"][account_name] = {"years": []}
-            status["completed_accounts"][account_name]["years"].append(year)
-            save_checkpoint_atomic(status_path, status)
-
-    return total_rows
-
-
-# =============================================================================
-# CURRENT YEAR PROCESSING (2026 - only recent activity)
-# =============================================================================
-
-def process_current_year(
-    accounts: Dict,
-    current_year: int,
-    days_back_filter: int,
-    auth_manager: BrightcoveAuthManager,
-    retry_config: RetryConfig,
-    proxies: dict,
-    paths: Dict,
+    conn,
+    video_max_dates: Dict,
+    overlap_days: int,
     logger
 ) -> int:
     """
-    Process current year (only videos with recent activity).
+    Process a single year for all accounts.
+
+    Uses overlap-based incremental fetching to handle Brightcove lag.
 
     Returns total rows written.
     """
-    checkpoint_path = paths['checkpoints'] / "daily_current.jsonl"
-
-    # Load existing checkpoint
-    checkpoint_rows = load_checkpoint_jsonl(checkpoint_path)
-    video_max_dates = build_video_max_date_map(checkpoint_rows)
-
-    logger.info(f"Current year checkpoint: {len(checkpoint_rows)} existing rows")
-
-    total_rows = len(checkpoint_rows)
     report_timestamp = datetime.now().isoformat()
+    total_rows = 0
 
-    # Date range for current year
-    from_date = f"{current_year}-01-01"
-    to_date = datetime.now().strftime("%Y-%m-%d")
+    # Date range for year
+    year_start = f"{year}-01-01"
+    year_end = f"{year}-12-31"
+    today = datetime.now().strftime("%Y-%m-%d")
 
-    # Cutoff for 90-day filter
-    cutoff_date = (datetime.now() - timedelta(days=days_back_filter)).strftime("%Y-%m-%d")
-
-    logger.info(f"Current year: {from_date} to {to_date}")
-    logger.info(f"90-day filter: only videos with dt_last_viewed >= {cutoff_date}")
+    # For current year, don't go past today
+    if year == datetime.now().year:
+        year_end = min(year_end, today)
 
     for account_name, account_config in accounts.items():
         account_id = account_config['account_id']
 
         logger.info(f"\n{'='*60}")
-        logger.info(f"Processing CURRENT: {account_name} {current_year}")
+        logger.info(f"Processing: {account_name} {year}")
         logger.info(f"{'='*60}")
 
         # Load CMS data
@@ -532,30 +334,32 @@ def process_current_year(
         with open(cms_path, 'r', encoding='utf-8') as f:
             videos = json.load(f)
 
-        # Filter to videos with recent activity (90-day filter)
-        active_videos = [
-            v for v in videos
-            if v.get("dt_last_viewed") and v.get("dt_last_viewed") >= cutoff_date
-        ]
-
-        logger.info(f"Filtered to {len(active_videos)} active videos (from {len(videos)} total)")
+        logger.info(f"Processing {len(videos)} videos for {year_start} to {year_end}")
 
         rows_written = 0
+        batch_rows = []
+        batch_size = 100  # Commit every N videos
 
-        for video in tqdm(active_videos, desc=f"{account_name} {current_year}"):
+        for video in tqdm(videos, desc=f"{account_name} {year}"):
             video_id = video.get("id")
             key = (account_id, video_id)
 
-            # Determine start date (resume point)
+            # Get last processed date for this video
             last_processed = video_max_dates.get(key)
-            if last_processed and last_processed >= from_date:
-                start_date = (
-                    datetime.strptime(last_processed, "%Y-%m-%d") + timedelta(days=1)
-                ).strftime("%Y-%m-%d")
-            else:
-                start_date = from_date
 
-            if start_date > to_date:
+            # Calculate start date with overlap
+            start_date = calculate_overlap_start_date(
+                last_processed_date=last_processed,
+                year_start=year_start,
+                overlap_days=overlap_days
+            )
+
+            # Skip if start_date is beyond year_end
+            if start_date > year_end:
+                continue
+
+            # Only fetch if within this year's range
+            if last_processed and last_processed >= year_end:
                 continue
 
             try:
@@ -564,7 +368,7 @@ def process_current_year(
                     video_id=video_id,
                     account_id=account_id,
                     from_date=start_date,
-                    to_date=to_date,
+                    to_date=year_end,
                     auth_manager=auth_manager,
                     retry_config=retry_config,
                     proxies=proxies,
@@ -578,7 +382,7 @@ def process_current_year(
                     video_id=video_id,
                     account_id=account_id,
                     from_date=start_date,
-                    to_date=to_date,
+                    to_date=year_end,
                     auth_manager=auth_manager,
                     retry_config=retry_config,
                     proxies=proxies,
@@ -589,23 +393,35 @@ def process_current_year(
                 metadata = extract_video_metadata(video, account_name)
                 metadata["account_id"] = account_id
 
-                # Merge and write rows
+                # Merge and collect rows
                 rows = merge_analytics_with_metadata(
                     summary, device_breakdown, metadata,
-                    report_timestamp, f"current_{current_year}"
+                    report_timestamp, f"year_{year}"
                 )
 
-                for row in rows:
-                    append_checkpoint_line(checkpoint_path, row)
-                    rows_written += 1
-                    video_max_dates[key] = row["date"]
+                batch_rows.extend(rows)
+                rows_written += len(rows)
+
+                # Update max date for this video
+                if rows:
+                    max_date = max(r["date"] for r in rows)
+                    video_max_dates[key] = max_date
+
+                # Batch commit
+                if len(batch_rows) >= batch_size * 30:  # ~30 days per video avg
+                    upsert_daily_analytics(conn, batch_rows, logger)
+                    batch_rows = []
 
             except Exception as e:
                 logger.warning(f"Failed video {video_id}: {e}")
                 continue
 
+        # Final batch commit
+        if batch_rows:
+            upsert_daily_analytics(conn, batch_rows, logger)
+
         total_rows += rows_written
-        logger.info(f"Completed {account_name}: {rows_written} new rows")
+        logger.info(f"Completed {account_name} {year}: {rows_written} rows")
 
     return total_rows
 
@@ -625,18 +441,31 @@ Parallel Processing:
         Terminal 1: python 3_daily_analytics.py --account Internet
         Terminal 2: python 3_daily_analytics.py --account Intranet
         Terminal 3: python 3_daily_analytics.py --account Harper
-    Each account writes to its own checkpoint file, avoiding write conflicts.
+
+    Each account writes to its own DuckDB file, avoiding write conflicts.
+    After all accounts complete, run merge_analytics_dbs.py to combine.
+
+Examples:
+    # Process all accounts sequentially (single DB)
+    python 3_daily_analytics.py
+
+    # Process single account (for parallel execution)
+    python 3_daily_analytics.py --account Internet
+
+    # Process specific years only
+    python 3_daily_analytics.py --years 2025 2026
         """
     )
     parser.add_argument(
         '--account',
         type=str,
-        help='Process only this account (enables parallel processing with separate checkpoint files)'
+        help='Process only this account (creates account-specific DuckDB file)'
     )
     parser.add_argument(
-        '--historical-only',
-        action='store_true',
-        help='Only process historical data (skip current year)'
+        '--years',
+        type=int,
+        nargs='+',
+        help='Process only these years (default: all configured years)'
     )
     return parser.parse_args()
 
@@ -649,7 +478,7 @@ def main():
     paths = get_output_paths()
     logger = setup_logging(paths['logs'], SCRIPT_NAME)
     logger.info("=" * 60)
-    logger.info("Starting daily analytics collection")
+    logger.info("Starting daily analytics collection (DuckDB mode)")
     logger.info("=" * 60)
 
     # Load configuration
@@ -661,11 +490,17 @@ def main():
     analytics_settings = settings['daily_analytics']
     historical_years = analytics_settings.get('historical_years', [2024, 2025])
     current_year = analytics_settings.get('current_year', 2026)
-    days_back_filter = analytics_settings.get('days_back_filter', 90)
+    overlap_days = analytics_settings.get('overlap_days', 7)
 
-    logger.info(f"Historical years: {historical_years}")
-    logger.info(f"Current year: {current_year}")
-    logger.info(f"90-day filter for current year: {days_back_filter} days")
+    # Combine all years
+    all_years = sorted(set(historical_years + [current_year]))
+
+    # Filter years if specified
+    if args.years:
+        all_years = [y for y in all_years if y in args.years]
+
+    logger.info(f"Years to process: {all_years}")
+    logger.info(f"Overlap days for lag compensation: {overlap_days}")
 
     # Setup authentication
     proxies = secrets.get('proxies') if settings['proxy']['enabled'] else None
@@ -689,89 +524,61 @@ def main():
     else:
         accounts = all_accounts
 
-    # Determine checkpoint file paths based on mode
+    # Determine DuckDB file path
     if single_account_mode:
-        # Account-specific files for parallel processing
-        checkpoint_path = paths['checkpoints'] / f"daily_historical_{args.account}.jsonl"
-        status_path = paths['checkpoints'] / f"historical_status_{args.account}.json"
-        logger.info(f"Using account-specific checkpoint: {checkpoint_path.name}")
+        db_path = paths['output'] / f"analytics_{args.account}.duckdb"
+        logger.info(f"Using account-specific DB: {db_path.name}")
     else:
-        # Default files (original behavior)
-        checkpoint_path = paths['checkpoints'] / "daily_historical.jsonl"
-        status_path = paths['checkpoints'] / "historical_status.json"
+        db_path = paths['output'] / "analytics.duckdb"
+        logger.info(f"Using central DB: {db_path.name}")
 
-    # Check if historical data needs processing
-    status = load_checkpoint(status_path) or {"completed_accounts": {}}
+    # Initialize DuckDB
+    conn = init_analytics_db(db_path)
 
-    # Check if all historical years are done for selected accounts
-    all_historical_done = True
-    for account_name in accounts.keys():
-        account_status = status.get("completed_accounts", {}).get(account_name, {})
-        completed_years = set(account_status.get("years", []))
-        if not all(y in completed_years for y in historical_years):
-            all_historical_done = False
-            break
+    # Get existing max dates for incremental processing
+    video_max_dates = get_all_video_max_dates(conn)
+    logger.info(f"Found {len(video_max_dates)} existing video records")
 
-    total_historical = 0
-    total_current = 0
+    # Process each year
+    total_rows = 0
+    for year in all_years:
+        logger.info(f"\n{'#'*60}")
+        logger.info(f"YEAR: {year}")
+        logger.info(f"{'#'*60}")
 
-    # Process historical years if needed
-    if not all_historical_done:
-        logger.info("\n" + "=" * 60)
-        logger.info("PHASE 1: Processing HISTORICAL data (2024 + 2025)")
-        logger.info("=" * 60)
-
-        total_historical = process_historical_years(
+        year_rows = process_year(
+            year=year,
             accounts=accounts,
-            historical_years=historical_years,
             auth_manager=auth_manager,
             retry_config=retry_config,
             proxies=proxies,
             paths=paths,
-            logger=logger,
-            checkpoint_path=checkpoint_path,
-            status_path=status_path
-        )
-    else:
-        logger.info("Historical data already complete - skipping")
-        # Count existing historical rows
-        if checkpoint_path.exists():
-            total_historical = len(load_checkpoint_jsonl(checkpoint_path))
-
-    # Process current year (unless --historical-only)
-    if not args.historical_only:
-        logger.info("\n" + "=" * 60)
-        logger.info(f"PHASE 2: Processing CURRENT year ({current_year})")
-        logger.info("=" * 60)
-
-        total_current = process_current_year(
-            accounts=accounts,
-            current_year=current_year,
-            days_back_filter=days_back_filter,
-            auth_manager=auth_manager,
-            retry_config=retry_config,
-            proxies=proxies,
-            paths=paths,
+            conn=conn,
+            video_max_dates=video_max_dates,
+            overlap_days=overlap_days,
             logger=logger
         )
-    else:
-        logger.info("Skipping current year (--historical-only)")
+        total_rows += year_rows
+
+    # Get final stats
+    stats = get_db_stats(conn)
+
+    # Close connection
+    conn.close()
 
     # Summary
     logger.info("\n" + "=" * 60)
     logger.info("Daily analytics collection completed")
     logger.info("=" * 60)
-    logger.info(f"Historical data: {total_historical} rows")
-    logger.info(f"Current year data: {total_current} rows")
-    logger.info(f"Total: {total_historical + total_current} rows")
-    logger.info("\nCheckpoint files:")
-    logger.info(f"  - {checkpoint_path.name}")
-    if not args.historical_only:
-        logger.info(f"  - checkpoints/daily_current.jsonl")
+    logger.info(f"Rows written this run: {total_rows:,}")
+    logger.info(f"Total rows in DB: {stats['total_rows']:,}")
+    logger.info(f"Unique videos: {stats['unique_videos']:,}")
+    logger.info(f"Date range: {stats['date_range'][0]} to {stats['date_range'][1]}")
+    logger.info(f"\nOutput: {db_path}")
+
     if single_account_mode:
-        logger.info(f"\nNote: Account-specific checkpoint used for parallel processing.")
-        logger.info(f"Scripts 4 and 5 will automatically merge all checkpoint files.")
-    logger.info("\nRun 4_combine_output.py or 5_to_parquet.py to generate output")
+        logger.info(f"\nNote: Account-specific DB created for parallel processing.")
+        logger.info(f"Run merge_analytics_dbs.py after all accounts complete to combine.")
 
 
 if __name__ == "__main__":
