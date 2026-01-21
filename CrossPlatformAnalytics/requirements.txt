@@ -1,0 +1,10 @@
+# CrossPlatformAnalytics Requirements
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+duckdb>=0.9.0
+tqdm>=4.62.0
+pandas>=1.3.0
+
+# Parquet export (for PowerBI)
+pyarrow>=10.0.0
