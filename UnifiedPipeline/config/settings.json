@@ -34,5 +34,11 @@
   },
   "proxy": {
     "enabled": true
+  },
+  "lifecycle_copy": {
+    "source_path": "output/life_cycle_mgmt/{YYYY}-{MM}",
+    "destination_path": "",
+    "destination_filename": "{ACCOUNT}_cms.xlsx",
+    "file_pattern": "*_cms.xlsx"
   }
 }
