@@ -509,7 +509,8 @@ def write_lifecycle_excel(
     """
     Write enriched CMS data to Excel file for lifecycle management.
 
-    Creates {account_name}_cms.xlsx in the life_cycle_mgmt output folder.
+    Creates {account_name}_cms.xlsx in the life_cycle_mgmt/{MM}/ folder,
+    where MM is the current month (01-12).
     Format matches Harper's channel_cms.xlsx output.
     """
     try:
@@ -518,8 +519,11 @@ def write_lifecycle_excel(
         logger.warning("pandas not installed. Skipping Excel export. Install with: pip install pandas openpyxl")
         return
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    excel_path = output_dir / f"{account_name}_cms.xlsx"
+    # Create month-based subfolder (01, 02, ..., 12)
+    current_month = datetime.now().strftime("%m")
+    month_dir = output_dir / current_month
+    month_dir.mkdir(parents=True, exist_ok=True)
+    excel_path = month_dir / f"{account_name}_cms.xlsx"
 
     # Define column order (matching Harper format)
     # Fixed fields first, then cf_* fields
