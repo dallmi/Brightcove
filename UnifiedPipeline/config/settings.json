@@ -37,8 +37,21 @@
   },
   "lifecycle_copy": {
     "source_path": "output/life_cycle_mgmt/{YYYY}-{MM}",
-    "destination_path": "",
+    "destination_base": "",
     "destination_filename": "{ACCOUNT}_cms.xlsx",
-    "file_pattern": "*_cms.xlsx"
+    "file_pattern": "*_cms.xlsx",
+    "account_folder_mapping": {
+      "circleone": "Circle-1--GWM",
+      "digital_networks_events": "DN&Events--Shared",
+      "fa_web": "FA-Web--GWMUS",
+      "impact": "Impact--GWM",
+      "Intranet": "IntRAnet--Shared",
+      "MyWay": "MyWay--GWM",
+      "neo": "NEO--IB",
+      "research_internal": "Research-Internal--IB",
+      "research": "Research-US--IB",
+      "SuMiTrust": "SuMi-Trust",
+      "Internet": "IntERnet-Shared"
+    }
   }
 }

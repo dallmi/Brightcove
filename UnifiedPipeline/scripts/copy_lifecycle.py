@@ -4,20 +4,29 @@ copy_lifecycle.py - Copy lifecycle management files to account-specific destinat
 Purpose:
     Copies the lifecycle Excel files from the year-month source folder
     to account-specific destination folders (e.g., SharePoint sync folder, network drive).
+    Supports mapping account names to different destination folder names.
 
 Configuration (in config/settings.json):
     "lifecycle_copy": {
         "source_path": "output/life_cycle_mgmt/{YYYY}-{MM}",
-        "destination_path": "/base/path/{ACCOUNT}/{YYYY}-{MM}",
+        "destination_base": "/path/to/BC-Video-Dump/DATA",
         "destination_filename": "{ACCOUNT}_cms.xlsx",
-        "file_pattern": "*_cms.xlsx"
+        "file_pattern": "*_cms.xlsx",
+        "account_folder_mapping": {
+            "circleone": "Circle-1--GWM",
+            "Internet": "IntERnet-Shared",
+            "Intranet": "IntRAnet--Shared"
+        }
     }
 
     Placeholders supported:
-        {MM}      - Current month (01-12)
-        {YYYY}    - Current year (2024, 2025, etc.)
-        {DD}      - Current day (01-31)
-        {ACCOUNT} - Account name extracted from filename (e.g., "Internet" from "Internet_cms.xlsx")
+        {MM}            - Current month (01-12)
+        {YYYY}          - Current year (2024, 2025, etc.)
+        {DD}            - Current day (01-31)
+        {ACCOUNT}       - Account name extracted from filename
+        {MAPPED_FOLDER} - Mapped destination folder name from account_folder_mapping
+        {YYYY}_{MM}     - Year_month with underscore (e.g., 2026_01)
+        {YYYY}-{MM}     - Year-month with hyphen (e.g., 2026-01)
 
 Usage:
     python copy_lifecycle.py
@@ -39,11 +48,11 @@ Examples:
     python copy_lifecycle.py --year 2025 --month 12
 
 Example destination structure:
-    With destination_path = "/sharepoint/Video Lifecycle/{ACCOUNT}/{YYYY}-{MM}"
+    With destination_base = "/sharepoint/BC-Video-Dump/DATA"
+    And account_folder_mapping = {"Internet": "IntERnet-Shared", "neo": "NEO--IB"}
 
-    Internet_cms.xlsx  -> /sharepoint/Video Lifecycle/Internet/2026-01/Internet_cms.xlsx
-    Intranet_cms.xlsx  -> /sharepoint/Video Lifecycle/Intranet/2026-01/Intranet_cms.xlsx
-    neo_cms.xlsx       -> /sharepoint/Video Lifecycle/neo/2026-01/neo_cms.xlsx
+    Internet_cms.xlsx  -> /sharepoint/BC-Video-Dump/DATA/IntERnet-Shared/2026_01/Internet_cms.xlsx
+    neo_cms.xlsx       -> /sharepoint/BC-Video-Dump/DATA/NEO--IB/2026_01/neo_cms.xlsx
 """
 
 import sys
@@ -91,22 +100,27 @@ def expand_placeholders(
     path_template: str,
     year_override: str = None,
     month_override: str = None,
-    account: str = None
+    account: str = None,
+    mapped_folder: str = None
 ) -> str:
     """
     Expand placeholders in path template.
 
     Supported placeholders:
-        {MM}      - Current month (01-12)
-        {YYYY}    - Current year
-        {DD}      - Current day
-        {ACCOUNT} - Account name
+        {MM}           - Current month (01-12)
+        {YYYY}         - Current year
+        {DD}           - Current day
+        {ACCOUNT}      - Account name (from filename)
+        {MAPPED_FOLDER} - Mapped destination folder name
+        {YYYY}_{MM}    - Year_month with underscore (e.g., 2026_01)
+        {YYYY}-{MM}    - Year-month with hyphen (e.g., 2026-01)
 
     Args:
         path_template: Path string with placeholders
         year_override: Optional year override (e.g., "2025")
         month_override: Optional month override (01-12)
         account: Optional account name for {ACCOUNT} placeholder
+        mapped_folder: Optional mapped folder name for {MAPPED_FOLDER} placeholder
 
     Returns:
         Expanded path string
@@ -120,10 +134,15 @@ def expand_placeholders(
         "{MM}": month,
         "{YYYY}": year,
         "{DD}": now.strftime("%d"),
+        "{YYYY}_{MM}": f"{year}_{month}",
+        "{YYYY}-{MM}": f"{year}-{month}",
     }
 
     if account:
         replacements["{ACCOUNT}"] = account
+
+    if mapped_folder:
+        replacements["{MAPPED_FOLDER}"] = mapped_folder
 
     result = path_template
     for placeholder, value in replacements.items():
@@ -137,6 +156,7 @@ def copy_files_to_account_destinations(
     destination_template: str,
     filename_template: str,
     file_pattern: str,
+    account_folder_mapping: dict,
     year_override: str,
     month_override: str,
     dry_run: bool,
@@ -147,9 +167,10 @@ def copy_files_to_account_destinations(
 
     Args:
         source_dir: Source directory containing files
-        destination_template: Destination path template with {ACCOUNT} placeholder
+        destination_template: Destination path template with {MAPPED_FOLDER} placeholder
         filename_template: Destination filename template (e.g., "{ACCOUNT}_cms.xlsx")
         file_pattern: Glob pattern for files to copy (e.g., "*_cms.xlsx")
+        account_folder_mapping: Dict mapping account names to destination folder names
         year_override: Optional year override
         month_override: Optional month override
         dry_run: If True, only log what would be done
@@ -172,20 +193,36 @@ def copy_files_to_account_destinations(
     logger.info("-" * 60)
 
     copied = 0
+    skipped = 0
     for source_file in files:
         # Extract account name from filename
         account = extract_account_from_filename(source_file.name)
 
         if not account:
             logger.warning(f"  Skipping {source_file.name} - cannot extract account name")
+            skipped += 1
             continue
 
-        # Expand destination path with account
+        # Look up mapped folder name (case-insensitive lookup)
+        mapped_folder = None
+        for key, value in account_folder_mapping.items():
+            if key.lower() == account.lower():
+                mapped_folder = value
+                break
+
+        if not mapped_folder:
+            logger.warning(f"  Skipping {account} - no folder mapping configured")
+            logger.warning(f"    Add to settings.json: \"{account}\": \"DESTINATION_FOLDER_NAME\"")
+            skipped += 1
+            continue
+
+        # Expand destination path with mapped folder
         dest_dir = Path(expand_placeholders(
             destination_template,
             year_override,
             month_override,
-            account
+            account,
+            mapped_folder
         ))
 
         # Expand destination filename
@@ -193,13 +230,14 @@ def copy_files_to_account_destinations(
             filename_template,
             year_override,
             month_override,
-            account
+            account,
+            mapped_folder
         )
 
         dest_file = dest_dir / dest_filename
 
         if dry_run:
-            logger.info(f"  [DRY-RUN] {account}:")
+            logger.info(f"  [DRY-RUN] {account} -> {mapped_folder}:")
             logger.info(f"    From: {source_file}")
             logger.info(f"    To:   {dest_file}")
         else:
@@ -211,7 +249,10 @@ def copy_files_to_account_destinations(
             except Exception as e:
                 logger.error(f"  Failed to copy {account}: {e}")
 
-    return copied if not dry_run else len(files)
+    if skipped > 0:
+        logger.info(f"Skipped {skipped} files (no mapping or invalid)")
+
+    return copied if not dry_run else len(files) - skipped
 
 
 def parse_args():
@@ -221,20 +262,26 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Copies lifecycle Excel files to account-specific destination folders.
+Supports mapping account names to different destination folder names.
 
 Configure in config/settings.json:
     "lifecycle_copy": {
         "source_path": "output/life_cycle_mgmt/{YYYY}-{MM}",
-        "destination_path": "/base/path/{ACCOUNT}/{YYYY}-{MM}",
+        "destination_base": "/path/to/BC-Video-Dump/DATA",
         "destination_filename": "{ACCOUNT}_cms.xlsx",
-        "file_pattern": "*_cms.xlsx"
+        "file_pattern": "*_cms.xlsx",
+        "account_folder_mapping": {
+            "Internet": "IntERnet-Shared",
+            "neo": "NEO--IB"
+        }
     }
 
 Placeholders:
-    {YYYY}    - Current year
-    {MM}      - Current month (01-12)
-    {DD}      - Current day
-    {ACCOUNT} - Account name from filename
+    {YYYY}          - Current year
+    {MM}            - Current month (01-12)
+    {DD}            - Current day
+    {ACCOUNT}       - Account name from filename
+    {MAPPED_FOLDER} - Mapped destination folder name
 
 Examples:
     python copy_lifecycle.py                          # Copy current year-month
@@ -242,9 +289,9 @@ Examples:
     python copy_lifecycle.py --month 01               # Copy January (current year)
     python copy_lifecycle.py --year 2025 --month 12   # Copy Dec 2025
 
-Example result:
-    Internet_cms.xlsx  -> /destination/Internet/2026-01/Internet_cms.xlsx
-    Intranet_cms.xlsx  -> /destination/Intranet/2026-01/Intranet_cms.xlsx
+Example result (with mapping Internet -> IntERnet-Shared):
+    Internet_cms.xlsx  -> /destination/IntERnet-Shared/2026_01/Internet_cms.xlsx
+    neo_cms.xlsx       -> /destination/NEO--IB/2026_01/neo_cms.xlsx
         """
     )
     parser.add_argument(
@@ -308,16 +355,30 @@ def main():
     else:
         source_path = Path(source_expanded)
 
-    # Get destination path template
+    # Get destination base path and build template
     if args.destination:
-        destination_template = args.destination
+        destination_base = args.destination
     else:
-        destination_template = lifecycle_config.get('destination_path', '')
-        if not destination_template:
-            logger.error("No destination_path configured in settings.json")
-            logger.error("Either set 'destination_path' in settings.json or use --destination flag")
-            logger.error("Example: /sharepoint/Video Lifecycle/{ACCOUNT}/{YYYY}-{MM}")
+        destination_base = lifecycle_config.get('destination_base', '')
+        if not destination_base:
+            logger.error("No destination_base configured in settings.json")
+            logger.error("Either set 'destination_base' in settings.json or use --destination flag")
+            logger.error("Example: /sharepoint/BC-Video-Dump/DATA")
             return
+
+    # Build destination template: base/{MAPPED_FOLDER}/{YYYY}_{MM}
+    destination_template = f"{destination_base}/{{MAPPED_FOLDER}}/{{YYYY}}_{{MM}}"
+
+    # Get account folder mapping
+    account_folder_mapping = lifecycle_config.get('account_folder_mapping', {})
+    if not account_folder_mapping:
+        logger.error("No 'account_folder_mapping' configured in settings.json")
+        logger.error("Please add account-to-folder mappings:")
+        logger.error('  "account_folder_mapping": {')
+        logger.error('    "Internet": "IntERnet-Shared",')
+        logger.error('    "Intranet": "IntRAnet--Shared"')
+        logger.error('  }')
+        return
 
     # Get destination filename template
     filename_template = lifecycle_config.get('destination_filename', '{ACCOUNT}_cms.xlsx')
@@ -332,7 +393,9 @@ def main():
 
     logger.info(f"Period: {current_year}-{current_month} ({month_name} {current_year})")
     logger.info(f"Source: {source_path}")
+    logger.info(f"Destination base: {destination_base}")
     logger.info(f"Destination template: {destination_template}")
+    logger.info(f"Account mappings: {len(account_folder_mapping)} configured")
     logger.info(f"Filename template: {filename_template}")
     logger.info(f"Pattern: {file_pattern}")
 
@@ -349,6 +412,7 @@ def main():
         destination_template=destination_template,
         filename_template=filename_template,
         file_pattern=file_pattern,
+        account_folder_mapping=account_folder_mapping,
         year_override=args.year,
         month_override=args.month,
         dry_run=args.dry_run,
