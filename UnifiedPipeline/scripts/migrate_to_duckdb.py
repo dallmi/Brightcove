@@ -15,9 +15,10 @@ Usage:
         --dry-run    Show what would be migrated without actually migrating
         --delete     Delete JSONL files after successful migration (default: keep)
 
-Input files (searched in output/checkpoints/):
-    - *_daily_analytics_*.jsonl (historical format)
-    - *_analytics_checkpoint_*.jsonl (current year format)
+Input files (searched in checkpoints/):
+    - daily_historical.jsonl (2024+2025 data)
+    - daily_historical_*.jsonl (account-specific historical)
+    - daily_current.jsonl (current year data)
 
 Output:
     - output/analytics.duckdb (central database)
@@ -51,9 +52,9 @@ def find_jsonl_files(checkpoints_dir: Path) -> list:
     Returns list of Path objects.
     """
     patterns = [
-        "*_daily_analytics_*.jsonl",
-        "*_analytics_checkpoint_*.jsonl",
-        "daily_analytics_*.jsonl",
+        "daily_historical.jsonl",
+        "daily_historical_*.jsonl",
+        "daily_current.jsonl",
     ]
 
     found = []
@@ -242,9 +243,9 @@ def main():
     if not jsonl_files:
         logger.info("No JSONL checkpoint files found to migrate.")
         logger.info("Searched for patterns:")
-        logger.info("  - *_daily_analytics_*.jsonl")
-        logger.info("  - *_analytics_checkpoint_*.jsonl")
-        logger.info("  - daily_analytics_*.jsonl")
+        logger.info("  - daily_historical.jsonl")
+        logger.info("  - daily_historical_*.jsonl")
+        logger.info("  - daily_current.jsonl")
         return
 
     logger.info(f"Found {len(jsonl_files)} JSONL files to migrate:")
