@@ -27,6 +27,7 @@ Output:
 import sys
 import json
 import argparse
+import gc
 from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
@@ -65,13 +66,21 @@ def find_jsonl_files(checkpoints_dir: Path) -> list:
     return sorted(set(found))
 
 
-def parse_jsonl_file(file_path: Path, logger) -> list:
-    """
-    Parse a JSONL file and return list of row dicts.
+def count_lines(file_path: Path) -> int:
+    """Count lines in a file efficiently."""
+    count = 0
+    with open(file_path, 'rb') as f:
+        for _ in f:
+            count += 1
+    return count
 
-    Handles malformed lines gracefully.
+
+def stream_jsonl_file(file_path: Path, logger):
     """
-    rows = []
+    Stream a JSONL file line by line (generator).
+
+    Yields parsed row dicts. Memory efficient for large files.
+    """
     line_count = 0
     error_count = 0
 
@@ -84,7 +93,7 @@ def parse_jsonl_file(file_path: Path, logger) -> list:
 
             try:
                 row = json.loads(line)
-                rows.append(row)
+                yield row
             except json.JSONDecodeError as e:
                 error_count += 1
                 if error_count <= 5:
@@ -92,8 +101,6 @@ def parse_jsonl_file(file_path: Path, logger) -> list:
 
     if error_count > 5:
         logger.warning(f"  ... and {error_count - 5} more parse errors")
-
-    return rows
 
 
 def normalize_row(row: dict) -> dict:
@@ -142,40 +149,53 @@ def normalize_row(row: dict) -> dict:
     return normalized
 
 
-def migrate_file(file_path: Path, conn, logger) -> int:
+def migrate_file(file_path: Path, conn, logger, batch_size: int = 10000) -> int:
     """
-    Migrate a single JSONL file to DuckDB.
+    Migrate a single JSONL file to DuckDB using streaming batches.
+
+    Memory-efficient: processes batch_size rows at a time.
 
     Returns number of rows migrated.
     """
     logger.info(f"  Parsing {file_path.name}...")
-    rows = parse_jsonl_file(file_path, logger)
 
-    if not rows:
-        logger.info(f"  No valid rows found")
-        return 0
+    # Count total lines for progress bar
+    total_lines = count_lines(file_path)
+    logger.info(f"  Total lines: {total_lines:,}")
 
-    # Normalize rows
-    normalized = [normalize_row(r) for r in rows]
+    total_migrated = 0
+    batch = []
+    skipped = 0
 
-    # Filter rows that have required fields
-    valid_rows = [
-        r for r in normalized
-        if r.get("account_id") and r.get("video_id") and r.get("date")
-    ]
+    # Stream and process in batches
+    with tqdm(total=total_lines, desc=f"  {file_path.name}", unit=" rows") as pbar:
+        for row in stream_jsonl_file(file_path, logger):
+            # Normalize row
+            normalized = normalize_row(row)
 
-    if len(valid_rows) != len(normalized):
-        logger.warning(
-            f"  {len(normalized) - len(valid_rows)} rows missing required fields (account_id, video_id, date)"
-        )
+            # Check required fields
+            if normalized.get("account_id") and normalized.get("video_id") and normalized.get("date"):
+                batch.append(normalized)
+            else:
+                skipped += 1
 
-    if not valid_rows:
-        return 0
+            pbar.update(1)
 
-    # Upsert to DuckDB
-    upsert_daily_analytics(conn, valid_rows, logger)
+            # Process batch when full
+            if len(batch) >= batch_size:
+                upsert_daily_analytics(conn, batch, logger)
+                total_migrated += len(batch)
+                batch = []  # Clear batch, free memory
 
-    return len(valid_rows)
+        # Process remaining rows
+        if batch:
+            upsert_daily_analytics(conn, batch, logger)
+            total_migrated += len(batch)
+
+    if skipped > 0:
+        logger.warning(f"  {skipped:,} rows missing required fields (account_id, video_id, date)")
+
+    return total_migrated
 
 
 def parse_args():
@@ -211,6 +231,12 @@ Example:
         '--checkpoint-dir',
         type=str,
         help='Override checkpoint directory path'
+    )
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=10000,
+        help='Number of rows to process per batch (default: 10000). Lower this if running out of memory.'
     )
     return parser.parse_args()
 
@@ -275,11 +301,11 @@ def main():
     total_migrated = 0
     files_migrated = 0
 
-    for file_path in tqdm(jsonl_files, desc="Migrating files"):
-        logger.info(f"\nProcessing: {file_path.name}")
+    for i, file_path in enumerate(jsonl_files, 1):
+        logger.info(f"\nProcessing [{i}/{len(jsonl_files)}]: {file_path.name}")
 
         try:
-            rows = migrate_file(file_path, conn, logger)
+            rows = migrate_file(file_path, conn, logger, batch_size=args.batch_size)
             total_migrated += rows
             files_migrated += 1
             logger.info(f"  Migrated {rows:,} rows")
@@ -289,8 +315,13 @@ def main():
                 file_path.unlink()
                 logger.info(f"  Deleted: {file_path.name}")
 
+            # Force garbage collection after each file to free memory
+            gc.collect()
+
         except Exception as e:
             logger.error(f"  Failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             continue
 
     # Get final stats
