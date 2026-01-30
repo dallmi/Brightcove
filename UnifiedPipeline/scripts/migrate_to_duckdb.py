@@ -73,6 +73,24 @@ def mark_file_completed(checkpoints_dir: Path, filename: str, rows_migrated: int
     save_migration_progress(checkpoints_dir, progress)
 
 
+def update_partial_progress(checkpoints_dir: Path, filename: str, lines_processed: int):
+    """Update partial progress for a file (called after each batch)."""
+    progress = load_migration_progress(checkpoints_dir)
+    progress["partial_files"][filename] = {
+        "lines_processed": lines_processed,
+        "timestamp": datetime.now().isoformat()
+    }
+    save_migration_progress(checkpoints_dir, progress)
+
+
+def get_resume_line(checkpoints_dir: Path, filename: str) -> int:
+    """Get the line number to resume from for a partial file."""
+    progress = load_migration_progress(checkpoints_dir)
+    if filename in progress["partial_files"]:
+        return progress["partial_files"][filename].get("lines_processed", 0)
+    return 0
+
+
 def is_file_completed(checkpoints_dir: Path, filename: str) -> bool:
     """Check if a file has been fully migrated."""
     progress = load_migration_progress(checkpoints_dir)
@@ -182,13 +200,14 @@ def normalize_row(row: dict) -> dict:
     return normalized
 
 
-def migrate_file(file_path: Path, conn, logger, batch_size: int = 10000) -> int:
+def migrate_file(file_path: Path, conn, logger, checkpoints_dir: Path, batch_size: int = 10000, skip_lines: int = 0) -> int:
     """
     Migrate a single JSONL file to DuckDB using streaming batches.
 
     Memory-efficient: processes batch_size rows at a time.
+    Supports resuming from a specific line number.
 
-    Returns number of rows migrated.
+    Returns number of rows migrated in this run.
     """
     logger.info(f"  Parsing {file_path.name}...")
 
@@ -196,13 +215,23 @@ def migrate_file(file_path: Path, conn, logger, batch_size: int = 10000) -> int:
     total_lines = count_lines(file_path)
     logger.info(f"  Total lines: {total_lines:,}")
 
+    if skip_lines > 0:
+        logger.info(f"  Resuming from line {skip_lines:,} ({skip_lines * 100 / total_lines:.1f}% already done)")
+
     total_migrated = 0
     batch = []
-    skipped = 0
+    skipped_invalid = 0
+    current_line = 0
 
     # Stream and process in batches
-    with tqdm(total=total_lines, desc=f"  {file_path.name}", unit=" rows") as pbar:
+    with tqdm(total=total_lines, initial=skip_lines, desc=f"  {file_path.name}", unit=" rows") as pbar:
         for row in stream_jsonl_file(file_path, logger):
+            current_line += 1
+
+            # Skip already processed lines
+            if current_line <= skip_lines:
+                continue
+
             # Normalize row
             normalized = normalize_row(row)
 
@@ -210,7 +239,7 @@ def migrate_file(file_path: Path, conn, logger, batch_size: int = 10000) -> int:
             if normalized.get("account_id") and normalized.get("video_id") and normalized.get("date"):
                 batch.append(normalized)
             else:
-                skipped += 1
+                skipped_invalid += 1
 
             pbar.update(1)
 
@@ -221,14 +250,17 @@ def migrate_file(file_path: Path, conn, logger, batch_size: int = 10000) -> int:
                 total_migrated += len(batch)
                 batch = []  # Clear batch, free memory
 
+                # Save progress after each batch for resume capability
+                update_partial_progress(checkpoints_dir, file_path.name, current_line)
+
         # Process remaining rows
         if batch:
             upsert_daily_analytics(conn, batch, logger)
             conn.commit()
             total_migrated += len(batch)
 
-    if skipped > 0:
-        logger.warning(f"  {skipped:,} rows missing required fields (account_id, video_id, date)")
+    if skipped_invalid > 0:
+        logger.warning(f"  {skipped_invalid:,} rows missing required fields (account_id, video_id, date)")
 
     return total_migrated
 
@@ -357,13 +389,23 @@ def main():
             files_migrated += 1
             continue
 
-        logger.info(f"\nProcessing [{i}/{len(jsonl_files)}]: {file_path.name}")
+        # Check for partial progress (resume capability)
+        resume_line = get_resume_line(checkpoints_dir, file_path.name)
+        if resume_line > 0:
+            logger.info(f"\nResuming [{i}/{len(jsonl_files)}]: {file_path.name} from line {resume_line:,}")
+        else:
+            logger.info(f"\nProcessing [{i}/{len(jsonl_files)}]: {file_path.name}")
 
         try:
-            rows = migrate_file(file_path, conn, logger, batch_size=args.batch_size)
+            rows = migrate_file(
+                file_path, conn, logger,
+                checkpoints_dir=checkpoints_dir,
+                batch_size=args.batch_size,
+                skip_lines=resume_line
+            )
             total_migrated += rows
             files_migrated += 1
-            logger.info(f"  Migrated {rows:,} rows")
+            logger.info(f"  Migrated {rows:,} rows (this run)")
 
             # Mark file as completed
             mark_file_completed(checkpoints_dir, file_path.name, rows)
