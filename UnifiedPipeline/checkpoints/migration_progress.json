@@ -1,0 +1,9 @@
+{
+  "completed_files": ["daily_current.jsonl"],
+  "partial_files": {
+    "daily_historical.jsonl": {
+      "lines_processed": 1280000,
+      "timestamp": "2026-01-29T08:09:49"
+    }
+  }
+}
