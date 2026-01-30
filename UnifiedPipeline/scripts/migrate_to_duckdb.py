@@ -44,6 +44,39 @@ from shared import (
 )
 
 SCRIPT_NAME = "migrate_to_duckdb"
+MIGRATION_TRACKER_FILE = "migration_progress.json"
+
+
+def load_migration_progress(checkpoints_dir: Path) -> dict:
+    """Load migration progress tracker."""
+    tracker_path = checkpoints_dir / MIGRATION_TRACKER_FILE
+    if tracker_path.exists():
+        with open(tracker_path, 'r') as f:
+            return json.load(f)
+    return {"completed_files": [], "partial_files": {}}
+
+
+def save_migration_progress(checkpoints_dir: Path, progress: dict):
+    """Save migration progress tracker."""
+    tracker_path = checkpoints_dir / MIGRATION_TRACKER_FILE
+    with open(tracker_path, 'w') as f:
+        json.dump(progress, f, indent=2)
+
+
+def mark_file_completed(checkpoints_dir: Path, filename: str, rows_migrated: int):
+    """Mark a file as fully migrated."""
+    progress = load_migration_progress(checkpoints_dir)
+    if filename not in progress["completed_files"]:
+        progress["completed_files"].append(filename)
+    # Remove from partial if it was there
+    progress["partial_files"].pop(filename, None)
+    save_migration_progress(checkpoints_dir, progress)
+
+
+def is_file_completed(checkpoints_dir: Path, filename: str) -> bool:
+    """Check if a file has been fully migrated."""
+    progress = load_migration_progress(checkpoints_dir)
+    return filename in progress["completed_files"]
 
 
 def find_jsonl_files(checkpoints_dir: Path) -> list:
@@ -184,12 +217,14 @@ def migrate_file(file_path: Path, conn, logger, batch_size: int = 10000) -> int:
             # Process batch when full
             if len(batch) >= batch_size:
                 upsert_daily_analytics(conn, batch, logger)
+                conn.commit()  # Commit after each batch to free memory and persist
                 total_migrated += len(batch)
                 batch = []  # Clear batch, free memory
 
         # Process remaining rows
         if batch:
             upsert_daily_analytics(conn, batch, logger)
+            conn.commit()
             total_migrated += len(batch)
 
     if skipped > 0:
@@ -237,6 +272,11 @@ Example:
         type=int,
         default=10000,
         help='Number of rows to process per batch (default: 10000). Lower this if running out of memory.'
+    )
+    parser.add_argument(
+        '--reset',
+        action='store_true',
+        help='Reset progress tracker and start migration from scratch'
     )
     return parser.parse_args()
 
@@ -287,6 +327,15 @@ def main():
         logger.info("\nDry run mode - no changes will be made")
         return
 
+    # Handle reset flag
+    if args.reset:
+        tracker_path = checkpoints_dir / MIGRATION_TRACKER_FILE
+        if tracker_path.exists():
+            tracker_path.unlink()
+            logger.info("Progress tracker reset - starting fresh")
+        else:
+            logger.info("No progress tracker to reset")
+
     # Initialize DuckDB
     db_path = paths['output'] / "analytics.duckdb"
     logger.info(f"\nTarget database: {db_path}")
@@ -302,6 +351,12 @@ def main():
     files_migrated = 0
 
     for i, file_path in enumerate(jsonl_files, 1):
+        # Check if file was already fully migrated
+        if is_file_completed(checkpoints_dir, file_path.name):
+            logger.info(f"\nSkipping [{i}/{len(jsonl_files)}]: {file_path.name} (already migrated)")
+            files_migrated += 1
+            continue
+
         logger.info(f"\nProcessing [{i}/{len(jsonl_files)}]: {file_path.name}")
 
         try:
@@ -309,6 +364,10 @@ def main():
             total_migrated += rows
             files_migrated += 1
             logger.info(f"  Migrated {rows:,} rows")
+
+            # Mark file as completed
+            mark_file_completed(checkpoints_dir, file_path.name, rows)
+            logger.info(f"  Marked as completed in progress tracker")
 
             # Delete source file only if --delete flag is set
             if args.delete and rows > 0:
