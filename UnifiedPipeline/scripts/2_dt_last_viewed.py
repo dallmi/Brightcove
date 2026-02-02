@@ -607,14 +607,23 @@ Features:
 Output:
     - output/analytics/{account}_dt_last_viewed.json
     - output/analytics/{account}_cms_enriched.json
+
+Examples:
+    python 2_dt_last_viewed.py                    # Process all accounts
+    python 2_dt_last_viewed.py --account impact   # Process only impact account
         """
+    )
+    parser.add_argument(
+        '--account',
+        type=str,
+        help='Process only this specific account (by name from accounts.json)'
     )
     return parser.parse_args()
 
 
 def main():
-    # Parse arguments (enables --help)
-    parse_args()
+    # Parse arguments
+    args = parse_args()
 
     # Setup
     paths = get_output_paths()
@@ -648,6 +657,15 @@ def main():
     accounts = config['accounts']['accounts']
     problematic_accounts = settings['windows'].get('problematic_accounts', [])
     overlap_days = settings['windows'].get('incremental_overlap_days', 3)
+
+    # Filter to single account if specified
+    if args.account:
+        if args.account not in accounts:
+            logger.error(f"Account '{args.account}' not found in accounts.json")
+            logger.info(f"Available accounts: {', '.join(accounts.keys())}")
+            sys.exit(1)
+        accounts = {args.account: accounts[args.account]}
+        logger.info(f"Running for single account: {args.account}")
 
     for account_name, account_config in accounts.items():
         account_id = account_config['account_id']
