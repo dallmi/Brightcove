@@ -235,18 +235,20 @@ def process_window_with_splitting(
     proxies: dict,
     logger,
     depth: int = 0
-) -> bool:
+) -> Tuple[bool, Optional[str]]:
     """
     Process a window, splitting on failure.
 
-    Returns True if successful, False if permanently failed.
+    Returns:
+        Tuple of (success, error_message). error_message is None on success.
     """
     max_depth = 5  # Prevent infinite recursion
     window_key = f"{from_date}_{to_date}"
 
     if depth > max_depth:
-        logger.error(f"Max split depth reached for window {window_key}")
-        return False
+        error_msg = f"Max split depth reached for window {window_key}"
+        logger.error(error_msg)
+        return False, error_msg
 
     try:
         items = fetch_analytics_slice(
@@ -260,7 +262,7 @@ def process_window_with_splitting(
         )
 
         merge_last_views(last_map, items)
-        return True
+        return True, None
 
     except Exception as e:
         days = get_date_range_days(from_date, to_date if to_date != "now" else datetime.now().strftime("%Y-%m-%d"))
@@ -275,7 +277,7 @@ def process_window_with_splitting(
             sub_windows = split_window(from_date, to_date)
 
             for sub_from, sub_to in sub_windows:
-                success = process_window_with_splitting(
+                success, error = process_window_with_splitting(
                     auth_manager=auth_manager,
                     account_id=account_id,
                     from_date=sub_from,
@@ -287,13 +289,14 @@ def process_window_with_splitting(
                     depth=depth + 1
                 )
                 if not success:
-                    return False
+                    return False, error
 
-            return True
+            return True, None
         else:
             # Cannot split further or is live window
-            logger.error(f"Window {window_key} permanently failed: {e}")
-            return False
+            error_msg = str(e)
+            logger.error(f"Window {window_key} permanently failed: {error_msg}")
+            return False, error_msg
 
 
 def process_account(
@@ -306,13 +309,17 @@ def process_account(
     checkpoint_path: Path,
     checkpoint: dict,
     logger,
-    overlap_days: int = 3
+    overlap_days: int = 3,
+    retry_failed: bool = False
 ) -> Dict[str, str]:
     """
     Process all windows for an account with checkpointing.
 
     Supports incremental mode: if account was previously completed,
     only fetches data from (last_run_date - overlap_days) to now.
+
+    Args:
+        retry_failed: If True, only retry previously failed windows.
 
     Returns:
         Dict mapping video_id -> dt_last_viewed
@@ -360,7 +367,31 @@ def process_account(
     # Load existing last_map
     last_map = account_chk["last_map"]
 
-    if is_incremental:
+    # RETRY FAILED MODE: Only process previously failed windows
+    if retry_failed:
+        failed_windows = account_chk.get("windows_failed", [])
+        if not failed_windows:
+            logger.info(f"No failed windows to retry for {account_name}")
+            return last_map
+
+        # Parse failed windows (handle both old string format and new dict format)
+        pending_windows = []
+        for item in failed_windows:
+            if isinstance(item, dict):
+                window_key = item.get("window")
+            else:
+                window_key = item
+            # Parse "YYYY-MM-DD_YYYY-MM-DD" format
+            parts = window_key.split("_")
+            if len(parts) == 2:
+                pending_windows.append((parts[0], parts[1]))
+
+        logger.info(f"RETRY FAILED MODE: {account_name}")
+        logger.info(f"  Retrying {len(pending_windows)} failed windows")
+        completed = set(account_chk.get("windows_completed", []))
+        is_incremental = False  # Treat as non-incremental for tracking
+
+    elif is_incremental:
         # INCREMENTAL MODE: Only fetch from (last_run_date - overlap_days) to now
         last_run = account_chk["last_run_date"]
 
@@ -411,7 +442,7 @@ def process_account(
         if window_key in completed:
             continue
 
-        success = process_window_with_splitting(
+        success, error_msg = process_window_with_splitting(
             auth_manager=auth_manager,
             account_id=account_id,
             from_date=from_date,
@@ -427,9 +458,25 @@ def process_account(
             if not is_incremental:
                 # Only track windows_completed for full mode (resume capability)
                 account_chk["windows_completed"] = list(completed)
+            # Remove from windows_failed if this was a retry
+            if retry_failed:
+                account_chk["windows_failed"] = [
+                    f for f in account_chk["windows_failed"]
+                    if (f.get("window") if isinstance(f, dict) else f) != window_key
+                ]
         else:
-            account_chk["windows_failed"].append(window_key)
-            logger.warning(f"Window failed: {from_date} to {to_date}")
+            # Store failure with error message (avoid duplicates)
+            existing_keys = [
+                f.get("window") if isinstance(f, dict) else f
+                for f in account_chk["windows_failed"]
+            ]
+            if window_key not in existing_keys:
+                account_chk["windows_failed"].append({
+                    "window": window_key,
+                    "error": error_msg,
+                    "timestamp": datetime.now().isoformat()
+                })
+            logger.warning(f"Window failed: {from_date} to {to_date} - {error_msg}")
 
         account_chk["last_map"] = last_map
         account_chk["last_updated"] = datetime.now().isoformat()
@@ -610,12 +657,18 @@ Output:
 Examples:
     python 2_dt_last_viewed.py                    # Process all accounts
     python 2_dt_last_viewed.py --account impact   # Process only impact account
+    python 2_dt_last_viewed.py --account impact --retry-failed  # Retry failed windows only
         """
     )
     parser.add_argument(
         '--account',
         type=str,
         help='Process only this specific account (by name from accounts.json)'
+    )
+    parser.add_argument(
+        '--retry-failed',
+        action='store_true',
+        help='Only retry previously failed windows (requires --account)'
     )
     return parser.parse_args()
 
@@ -656,6 +709,11 @@ def main():
     accounts = config['accounts']['accounts']
     problematic_accounts = settings['windows'].get('problematic_accounts', [])
     overlap_days = settings['windows'].get('incremental_overlap_days', 3)
+
+    # Validate --retry-failed requires --account
+    if getattr(args, 'retry_failed', False) and not args.account:
+        logger.error("--retry-failed requires --account to be specified")
+        sys.exit(1)
 
     # Filter to single account if specified
     if args.account:
@@ -701,7 +759,8 @@ def main():
                 checkpoint_path=checkpoint_path,
                 checkpoint=checkpoint,
                 logger=logger,
-                overlap_days=overlap_days
+                overlap_days=overlap_days,
+                retry_failed=getattr(args, 'retry_failed', False)
             )
 
             # Write outputs
@@ -730,7 +789,15 @@ def main():
         account_chk = checkpoint.get("accounts", {}).get(account_name, {})
         failed = account_chk.get("windows_failed", [])
         if failed:
-            logger.warning(f"{account_name}: {len(failed)} windows failed: {failed}")
+            logger.warning(f"{account_name}: {len(failed)} windows failed:")
+            for item in failed:
+                if isinstance(item, dict):
+                    window = item.get("window", "unknown")
+                    error = item.get("error", "no error details")
+                    logger.warning(f"  - {window}: {error}")
+                else:
+                    # Old format (string only)
+                    logger.warning(f"  - {item}")
 
     logger.info("=" * 60)
 
