@@ -411,8 +411,6 @@ def process_account(
         if window_key in completed:
             continue
 
-        logger.info(f"Processing window: {from_date} to {to_date}")
-
         success = process_window_with_splitting(
             auth_manager=auth_manager,
             account_id=account_id,
