@@ -262,14 +262,23 @@ IMPORTANT: Run this script at EVERY execution to capture newly created videos!
 Output:
     - output/cms/{account}_cms_metadata.json (full API response)
     - output/cms/{account}_cms_metadata.csv (flattened with custom fields)
+
+Examples:
+    python 1_cms_metadata.py                    # Process all accounts
+    python 1_cms_metadata.py --account Harper   # Process only Harper account
         """
+    )
+    parser.add_argument(
+        '--account',
+        type=str,
+        help='Process only this specific account (by name from accounts.json)'
     )
     return parser.parse_args()
 
 
 def main():
-    # Parse arguments (enables --help)
-    parse_args()
+    # Parse arguments
+    args = parse_args()
 
     # Setup
     paths = get_output_paths()
@@ -307,6 +316,17 @@ def main():
 
     # Process each account
     accounts = config['accounts']['accounts']
+
+    # Filter to single account if specified
+    if args.account:
+        if args.account not in accounts:
+            logger.error(f"Account '{args.account}' not found in accounts.json")
+            logger.info(f"Available accounts: {', '.join(accounts.keys())}")
+            sys.exit(1)
+        accounts = {args.account: accounts[args.account]}
+        # Don't skip based on checkpoint when running single account
+        accounts_completed = set()
+        logger.info(f"Running for single account: {args.account}")
 
     for account_name, account_config in accounts.items():
         if account_name in accounts_completed:
