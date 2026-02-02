@@ -170,9 +170,18 @@ def fetch_analytics_slice(
         "offset": offset
     }
 
-    # Use reconciled data for historical windows, live for "now"
+    # Use reconciled data for historical windows, live data for recent windows
+    # Reconciled data takes 24-72h to become available, so use live data for last 3 days
     if to_date != "now":
-        params["reconciled"] = "true"
+        try:
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d")
+            days_ago = (datetime.now() - to_dt).days
+            if days_ago >= 3:
+                params["reconciled"] = "true"
+            # else: use live data (no reconciled param)
+        except ValueError:
+            # If date parsing fails, default to reconciled
+            params["reconciled"] = "true"
 
     while True:
         headers = {"Authorization": f"Bearer {auth_manager.get_token()}"}
