@@ -429,6 +429,7 @@ def process_account(
                 account_chk["windows_completed"] = list(completed)
         else:
             account_chk["windows_failed"].append(window_key)
+            logger.warning(f"Window failed: {from_date} to {to_date}")
 
         account_chk["last_map"] = last_map
         account_chk["last_updated"] = datetime.now().isoformat()
@@ -724,11 +725,12 @@ def main():
     logger.info("\n" + "=" * 60)
     logger.info("dt_last_viewed calculation completed")
 
-    # Report any failures
-    for account_name, account_chk in checkpoint.get("accounts", {}).items():
+    # Report failures only for accounts processed in this run
+    for account_name in accounts.keys():
+        account_chk = checkpoint.get("accounts", {}).get(account_name, {})
         failed = account_chk.get("windows_failed", [])
         if failed:
-            logger.warning(f"{account_name}: {len(failed)} windows failed")
+            logger.warning(f"{account_name}: {len(failed)} windows failed: {failed}")
 
     logger.info("=" * 60)
 
