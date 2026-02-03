@@ -81,6 +81,19 @@ THIN_BORDER = Border(
 )
 
 
+def sanitize_for_excel(value) -> str:
+    """Remove illegal characters that can't be written to Excel/XML."""
+    if value is None or pd.isna(value):
+        return ""
+    # Convert to string
+    s = str(value)
+    # Remove control characters (except tab, newline, carriage return)
+    # XML 1.0 illegal chars: 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F
+    import re
+    s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', s)
+    return s
+
+
 def normalize_account_name(name: str) -> str:
     """Normalize account name for comparison."""
     name = name.lower()
@@ -715,7 +728,7 @@ def create_missing_in_unified_tab(wb: Workbook, analyses: list[dict]):
         for video in analysis.get("videos_only_in_harper", []):
             ws.cell(row=row_idx, column=1, value=account)
             ws.cell(row=row_idx, column=2, value=video["video_id"])
-            ws.cell(row=row_idx, column=3, value=video.get("name", ""))
+            ws.cell(row=row_idx, column=3, value=sanitize_for_excel(video.get("name", "")))
             row_idx += 1
 
     if row_idx == 2:
@@ -740,7 +753,7 @@ def create_missing_in_harper_tab(wb: Workbook, analyses: list[dict]):
         for video in analysis.get("videos_only_in_unified", []):
             ws.cell(row=row_idx, column=1, value=account)
             ws.cell(row=row_idx, column=2, value=video["video_id"])
-            ws.cell(row=row_idx, column=3, value=video.get("name", ""))
+            ws.cell(row=row_idx, column=3, value=sanitize_for_excel(video.get("name", "")))
             row_idx += 1
 
     if row_idx == 2:
@@ -768,11 +781,11 @@ def create_value_mismatches_tab(wb: Workbook, analyses: list[dict]):
         for mismatch in analysis.get("value_mismatches", []):
             ws.cell(row=row_idx, column=1, value=account)
             ws.cell(row=row_idx, column=2, value=mismatch["video_id"])
-            ws.cell(row=row_idx, column=3, value=mismatch.get("video_name", ""))
+            ws.cell(row=row_idx, column=3, value=sanitize_for_excel(mismatch.get("video_name", "")))
             ws.cell(row=row_idx, column=4, value=mismatch["column_harper"])
             ws.cell(row=row_idx, column=5, value=mismatch["column_unified"])
-            ws.cell(row=row_idx, column=6, value=mismatch["value_harper"][:500])
-            ws.cell(row=row_idx, column=7, value=mismatch["value_unified"][:500])
+            ws.cell(row=row_idx, column=6, value=sanitize_for_excel(mismatch["value_harper"][:500]))
+            ws.cell(row=row_idx, column=7, value=sanitize_for_excel(mismatch["value_unified"][:500]))
             row_idx += 1
 
             if row_idx > 50000:  # Excel row limit safety
@@ -856,7 +869,7 @@ def create_dt_last_viewed_tab(wb: Workbook, analyses: list[dict]):
 
             ws.cell(row=row_idx, column=1, value=account)
             ws.cell(row=row_idx, column=2, value=comp["video_id"])
-            ws.cell(row=row_idx, column=3, value=comp.get("video_name", ""))
+            ws.cell(row=row_idx, column=3, value=sanitize_for_excel(comp.get("video_name", "")))
             ws.cell(row=row_idx, column=4, value=comp["harper_dt_last_viewed"])
             ws.cell(row=row_idx, column=5, value=comp["unified_dt_last_viewed"])
 
