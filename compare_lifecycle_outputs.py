@@ -527,17 +527,22 @@ def style_header_row(ws, num_cols: int):
 
 def auto_adjust_columns(ws):
     """Auto-adjust column widths."""
-    for column_cells in ws.columns:
+    from openpyxl.utils import get_column_letter
+    from openpyxl.cell.cell import MergedCell
+
+    for col_idx, column_cells in enumerate(ws.columns, start=1):
         max_length = 0
-        column = column_cells[0].column_letter
         for cell in column_cells:
+            # Skip merged cells
+            if isinstance(cell, MergedCell):
+                continue
             try:
                 if cell.value:
                     max_length = max(max_length, len(str(cell.value)))
             except:
                 pass
         adjusted_width = min(max_length + 2, 50)
-        ws.column_dimensions[column].width = adjusted_width
+        ws.column_dimensions[get_column_letter(col_idx)].width = adjusted_width
 
 
 def create_summary_tab(wb: Workbook, analyses: list[dict]):
