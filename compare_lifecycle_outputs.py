@@ -36,8 +36,8 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 
 
 # Default paths
-DEFAULT_HARPER_DIR = Path("/Users/micha/Documents/Arbeit/brightcove_ori/Harper/csv")
-DEFAULT_UNIFIED_DIR = Path("/Users/micha/Documents/Arbeit/brightcove_ori/UnifiedPipeline/output/life_cycle_mgmt")
+DEFAULT_HARPER_DIR = Path("P:/IMPORTANT/Projects/brightcove_ori/Harper/csv")
+DEFAULT_UNIFIED_DIR = Path("P:/IMPORTANT/Projects/brightcove_ori/UnifiedPipeline/output/life_cycle_mgmt")
 
 # Account name mapping between Harper and UnifiedPipeline
 ACCOUNT_MAPPING = {
