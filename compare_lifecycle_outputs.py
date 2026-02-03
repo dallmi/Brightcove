@@ -307,7 +307,7 @@ def compare_dt_last_viewed(
     id_col_unified = "id" if "id" in df_unified.columns else "video_id"
 
     unified_by_id = {
-        str(row[id_col_unified]): row
+        str(row[id_col_unified]): row.to_dict()
         for _, row in df_unified.iterrows()
         if pd.notna(row[id_col_unified])
     }
@@ -321,7 +321,7 @@ def compare_dt_last_viewed(
         unified_row = unified_by_id.get(video_id, {})
 
         harper_lv = harper_row.get("dt_last_viewed", "")
-        unified_lv = unified_row.get("dt_last_viewed", "") if unified_row else ""
+        unified_lv = unified_row.get("dt_last_viewed", "")
 
         harper_lv_str = str(harper_lv) if pd.notna(harper_lv) else ""
         unified_lv_str = str(unified_lv) if pd.notna(unified_lv) else ""
