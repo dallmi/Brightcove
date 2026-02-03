@@ -83,15 +83,43 @@ THIN_BORDER = Border(
 
 def sanitize_for_excel(value) -> str:
     """Remove illegal characters that can't be written to Excel/XML."""
-    if value is None or pd.isna(value):
+    if value is None:
         return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (ValueError, TypeError):
+        pass  # pd.isna can fail on some types
+
     # Convert to string
     s = str(value)
-    # Remove control characters (except tab, newline, carriage return)
-    # XML 1.0 illegal chars: 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F
+
+    # Remove ALL control characters except tab (\x09), newline (\x0A), carriage return (\x0D)
+    # XML 1.0 illegal: 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, 0x7F, and some Unicode ranges
     import re
-    s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', '', s)
+    # Remove C0 control characters (except tab, LF, CR)
+    s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', s)
+    # Remove C1 control characters (0x80-0x9F)
+    s = re.sub(r'[\x80-\x9F]', '', s)
+    # Remove other problematic Unicode characters
+    s = re.sub(r'[\uFFFE\uFFFF]', '', s)
+    # Remove surrogate pairs that might be orphaned
+    s = re.sub(r'[\uD800-\uDFFF]', '', s)
+
     return s
+
+
+def safe_cell_write(ws, row: int, column: int, value, sanitize: bool = True):
+    """Write a value to a cell, automatically sanitizing strings."""
+    if sanitize and isinstance(value, str):
+        value = sanitize_for_excel(value)
+    elif sanitize and value is not None:
+        # Sanitize any non-None value that might become a string
+        try:
+            value = sanitize_for_excel(value)
+        except:
+            pass
+    return ws.cell(row=row, column=column, value=value)
 
 
 def normalize_account_name(name: str) -> str:
@@ -691,16 +719,16 @@ def create_column_analysis_tab(wb: Workbook, analyses: list[dict]):
         account = analysis["account"]
 
         for col_name in analysis.get("columns_only_in_harper", []):
-            ws.cell(row=row_idx, column=1, value=account)
-            ws.cell(row=row_idx, column=2, value=col_name)
+            safe_cell_write(ws, row_idx, 1, account)
+            safe_cell_write(ws, row_idx, 2, col_name)
             cell = ws.cell(row=row_idx, column=3, value="Harper Only")
             cell.fill = WARNING_FILL
             ws.cell(row=row_idx, column=4, value="Missing in UnifiedPipeline output")
             row_idx += 1
 
         for col_name in analysis.get("columns_only_in_unified", []):
-            ws.cell(row=row_idx, column=1, value=account)
-            ws.cell(row=row_idx, column=2, value=col_name)
+            safe_cell_write(ws, row_idx, 1, account)
+            safe_cell_write(ws, row_idx, 2, col_name)
             cell = ws.cell(row=row_idx, column=3, value="Unified Only")
             cell.fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
             ws.cell(row=row_idx, column=4, value="Missing in Harper output")
@@ -726,9 +754,9 @@ def create_missing_in_unified_tab(wb: Workbook, analyses: list[dict]):
     for analysis in sorted(analyses, key=lambda x: x["account"]):
         account = analysis["account"]
         for video in analysis.get("videos_only_in_harper", []):
-            ws.cell(row=row_idx, column=1, value=account)
-            ws.cell(row=row_idx, column=2, value=video["video_id"])
-            ws.cell(row=row_idx, column=3, value=sanitize_for_excel(video.get("name", "")))
+            safe_cell_write(ws, row_idx, 1, account)
+            safe_cell_write(ws, row_idx, 2, video["video_id"])
+            safe_cell_write(ws, row_idx, 3, video.get("name", ""))
             row_idx += 1
 
     if row_idx == 2:
@@ -751,9 +779,9 @@ def create_missing_in_harper_tab(wb: Workbook, analyses: list[dict]):
     for analysis in sorted(analyses, key=lambda x: x["account"]):
         account = analysis["account"]
         for video in analysis.get("videos_only_in_unified", []):
-            ws.cell(row=row_idx, column=1, value=account)
-            ws.cell(row=row_idx, column=2, value=video["video_id"])
-            ws.cell(row=row_idx, column=3, value=sanitize_for_excel(video.get("name", "")))
+            safe_cell_write(ws, row_idx, 1, account)
+            safe_cell_write(ws, row_idx, 2, video["video_id"])
+            safe_cell_write(ws, row_idx, 3, video.get("name", ""))
             row_idx += 1
 
     if row_idx == 2:
@@ -779,13 +807,13 @@ def create_value_mismatches_tab(wb: Workbook, analyses: list[dict]):
     for analysis in sorted(analyses, key=lambda x: x["account"]):
         account = analysis["account"]
         for mismatch in analysis.get("value_mismatches", []):
-            ws.cell(row=row_idx, column=1, value=account)
-            ws.cell(row=row_idx, column=2, value=mismatch["video_id"])
-            ws.cell(row=row_idx, column=3, value=sanitize_for_excel(mismatch.get("video_name", "")))
-            ws.cell(row=row_idx, column=4, value=mismatch["column_harper"])
-            ws.cell(row=row_idx, column=5, value=mismatch["column_unified"])
-            ws.cell(row=row_idx, column=6, value=sanitize_for_excel(mismatch["value_harper"][:500]))
-            ws.cell(row=row_idx, column=7, value=sanitize_for_excel(mismatch["value_unified"][:500]))
+            safe_cell_write(ws, row_idx, 1, account)
+            safe_cell_write(ws, row_idx, 2, mismatch["video_id"])
+            safe_cell_write(ws, row_idx, 3, mismatch.get("video_name", ""))
+            safe_cell_write(ws, row_idx, 4, mismatch["column_harper"])
+            safe_cell_write(ws, row_idx, 5, mismatch["column_unified"])
+            safe_cell_write(ws, row_idx, 6, mismatch["value_harper"][:500])
+            safe_cell_write(ws, row_idx, 7, mismatch["value_unified"][:500])
             row_idx += 1
 
             if row_idx > 50000:  # Excel row limit safety
@@ -867,11 +895,11 @@ def create_dt_last_viewed_tab(wb: Workbook, analyses: list[dict]):
             if comp["status"] == "MATCH":
                 continue  # Skip matches
 
-            ws.cell(row=row_idx, column=1, value=account)
-            ws.cell(row=row_idx, column=2, value=comp["video_id"])
-            ws.cell(row=row_idx, column=3, value=sanitize_for_excel(comp.get("video_name", "")))
-            ws.cell(row=row_idx, column=4, value=comp["harper_dt_last_viewed"])
-            ws.cell(row=row_idx, column=5, value=comp["unified_dt_last_viewed"])
+            safe_cell_write(ws, row_idx, 1, account)
+            safe_cell_write(ws, row_idx, 2, comp["video_id"])
+            safe_cell_write(ws, row_idx, 3, comp.get("video_name", ""))
+            safe_cell_write(ws, row_idx, 4, comp["harper_dt_last_viewed"])
+            safe_cell_write(ws, row_idx, 5, comp["unified_dt_last_viewed"])
 
             status_cell = ws.cell(row=row_idx, column=6, value=comp["status"])
             if comp["status"] == "DIFFERENT":
