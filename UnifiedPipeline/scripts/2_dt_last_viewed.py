@@ -537,7 +537,7 @@ def enrich_cms_metadata(
         videos = json.load(f)
 
     for video in videos:
-        video_id = video.get("id")
+        video_id = str(video.get("id"))  # Convert to string to match last_map keys
         video["dt_last_viewed"] = last_map.get(video_id)
 
         # Unnest custom_fields as cf_* fields
