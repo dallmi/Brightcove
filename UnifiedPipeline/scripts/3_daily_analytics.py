@@ -347,6 +347,14 @@ def process_year(
             video_id = str(video.get("id"))  # Convert to string to match DuckDB keys
             key = (str(account_id), video_id)
 
+            # Skip videos created after this year - they can't have historical data
+            created_at = video.get("created_at", "")
+            if created_at:
+                # Extract just the date part (YYYY-MM-DD) from ISO timestamp
+                created_date = created_at[:10] if len(created_at) >= 10 else ""
+                if created_date > year_end:
+                    continue  # Video didn't exist in this year
+
             # Get last processed date for this video
             last_processed = video_max_dates.get(key)
 
@@ -357,7 +365,7 @@ def process_year(
                 overlap_days=overlap_days
             )
 
-            # Debug: log first video for this account
+            # Debug: log first video for this account (only for videos not skipped by created_at)
             if not first_video_logged:
                 logger.info(f"DEBUG: First lookup key for {account_name}: {key}")
                 logger.info(f"DEBUG: Key in video_max_dates? {key in video_max_dates}")
