@@ -340,9 +340,18 @@ def process_year(
         batch_rows = []
         batch_size = 100  # Commit every N videos
 
+        # Debug: show first video key for comparison
+        first_video_logged = False
+
         for video in tqdm(videos, desc=f"{account_name} {year}"):
             video_id = str(video.get("id"))  # Convert to string to match DuckDB keys
             key = (str(account_id), video_id)
+
+            # Debug: log first video key for this account
+            if not first_video_logged:
+                logger.info(f"DEBUG: First lookup key for {account_name}: {key}")
+                logger.info(f"DEBUG: Key in video_max_dates? {key in video_max_dates}")
+                first_video_logged = True
 
             # Get last processed date for this video
             last_processed = video_max_dates.get(key)
@@ -589,6 +598,12 @@ def main():
     # Get existing max dates for incremental processing
     video_max_dates = get_all_video_max_dates(conn)
     logger.info(f"Found {len(video_max_dates)} existing video records")
+
+    # Debug: show sample keys from video_max_dates
+    if video_max_dates:
+        sample_keys = list(video_max_dates.keys())[:3]
+        logger.info(f"DEBUG: Sample keys from DuckDB: {sample_keys}")
+        logger.info(f"DEBUG: Key types: account_id={type(sample_keys[0][0])}, video_id={type(sample_keys[0][1])}")
 
     # Process each year
     total_rows = 0
