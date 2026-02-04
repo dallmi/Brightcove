@@ -347,12 +347,6 @@ def process_year(
             video_id = str(video.get("id"))  # Convert to string to match DuckDB keys
             key = (str(account_id), video_id)
 
-            # Debug: log first video key for this account
-            if not first_video_logged:
-                logger.info(f"DEBUG: First lookup key for {account_name}: {key}")
-                logger.info(f"DEBUG: Key in video_max_dates? {key in video_max_dates}")
-                first_video_logged = True
-
             # Get last processed date for this video
             last_processed = video_max_dates.get(key)
 
@@ -362,6 +356,16 @@ def process_year(
                 year_start=year_start,
                 overlap_days=overlap_days
             )
+
+            # Debug: log first video for this account
+            if not first_video_logged:
+                logger.info(f"DEBUG: First lookup key for {account_name}: {key}")
+                logger.info(f"DEBUG: Key in video_max_dates? {key in video_max_dates}")
+                logger.info(f"DEBUG: last_processed = {last_processed}, year_end = {year_end}")
+                logger.info(f"DEBUG: start_date = {start_date}")
+                logger.info(f"DEBUG: Would skip (start>end)? {start_date > year_end}")
+                logger.info(f"DEBUG: Would skip (last>=end)? {last_processed and last_processed >= year_end}")
+                first_video_logged = True
 
             # Skip if start_date is beyond year_end
             if start_date > year_end:
