@@ -555,6 +555,33 @@ def enrich_cms_metadata(
     return videos
 
 
+def sanitize_for_excel(value) -> str:
+    """
+    Remove illegal characters that can't be written to Excel/XML.
+
+    XML 1.0 doesn't allow certain control characters, and openpyxl
+    will raise IllegalCharacterError if they're present.
+    """
+    import re
+
+    if value is None:
+        return ""
+
+    # Convert to string
+    s = str(value)
+
+    # Remove C0 control characters (except tab \x09, LF \x0A, CR \x0D)
+    s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', s)
+    # Remove C1 control characters (0x80-0x9F)
+    s = re.sub(r'[\x80-\x9F]', '', s)
+    # Remove other problematic Unicode characters
+    s = re.sub(r'[\uFFFE\uFFFF]', '', s)
+    # Remove orphaned surrogate pairs
+    s = re.sub(r'[\uD800-\uDFFF]', '', s)
+
+    return s
+
+
 def write_lifecycle_excel(
     videos: List[Dict],
     account_name: str,
@@ -628,13 +655,19 @@ def write_lifecycle_excel(
 
     df = df[final_columns]
 
+    # Sanitize all string columns to remove illegal XML characters
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].apply(lambda x: sanitize_for_excel(x) if pd.notna(x) else '')
+
     # Write to Excel
     try:
         df.to_excel(excel_path, index=False, engine='openpyxl')
         logger.info(f"Stakeholder Excel written: {excel_path} ({len(videos)} videos)")
     except Exception as e:
-        logger.warning(f"Failed to write Excel (openpyxl may not be installed): {e}")
-        logger.warning("Install with: pip install openpyxl")
+        logger.error(f"Failed to write Excel: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 # =============================================================================
