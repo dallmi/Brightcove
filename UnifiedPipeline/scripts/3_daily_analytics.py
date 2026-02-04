@@ -341,8 +341,8 @@ def process_year(
         batch_size = 100  # Commit every N videos
 
         for video in tqdm(videos, desc=f"{account_name} {year}"):
-            video_id = video.get("id")
-            key = (account_id, video_id)
+            video_id = str(video.get("id"))  # Convert to string to match DuckDB keys
+            key = (str(account_id), video_id)
 
             # Get last processed date for this video
             last_processed = video_max_dates.get(key)
