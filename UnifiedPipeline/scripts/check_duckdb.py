@@ -26,7 +26,7 @@ def main():
         SELECT
             COUNT(*) as total_rows,
             COUNT(DISTINCT video_id) as unique_videos,
-            COUNT(DISTINCT account_name) as accounts,
+            COUNT(DISTINCT account_id) as accounts,
             MIN(date) as earliest_date,
             MAX(date) as latest_date
         FROM daily_analytics
@@ -43,14 +43,14 @@ def main():
 
     results = conn.execute("""
         SELECT
-            account_name,
+            account_id,
             COUNT(*) as rows,
             COUNT(DISTINCT video_id) as videos,
             MIN(date) as min_date,
             MAX(date) as max_date
         FROM daily_analytics
-        GROUP BY account_name
-        ORDER BY account_name
+        GROUP BY account_id
+        ORDER BY account_id
     """).fetchall()
 
     for row in results:
@@ -65,7 +65,7 @@ def main():
         SELECT
             EXTRACT(YEAR FROM date) as year,
             COUNT(*) as rows,
-            COUNT(DISTINCT account_name) as accounts
+            COUNT(DISTINCT account_id) as accounts
         FROM daily_analytics
         GROUP BY year
         ORDER BY year
@@ -81,13 +81,13 @@ def main():
 
     results = conn.execute("""
         SELECT
-            account_name,
+            account_id,
             SUM(CASE WHEN EXTRACT(YEAR FROM date) = 2024 THEN 1 ELSE 0 END) as y2024,
             SUM(CASE WHEN EXTRACT(YEAR FROM date) = 2025 THEN 1 ELSE 0 END) as y2025,
             SUM(CASE WHEN EXTRACT(YEAR FROM date) = 2026 THEN 1 ELSE 0 END) as y2026
         FROM daily_analytics
-        GROUP BY account_name
-        ORDER BY account_name
+        GROUP BY account_id
+        ORDER BY account_id
     """).fetchall()
 
     for row in results:
@@ -96,30 +96,23 @@ def main():
         y2026 = f"{row[3]:,}" if row[3] > 0 else "MISSING!"
         print(f"   {row[0]:<25} {y2024:>12} {y2025:>12} {y2026:>12}")
 
-    # 5. Check specifically for Intranet
-    print("\n5. INTRANET DETAILED CHECK:")
-    result = conn.execute("""
+    # 5. List all account IDs with their data ranges
+    print("\n5. ALL ACCOUNT IDS:")
+    print("   (Use this to identify which account_id corresponds to Intranet)")
+    results = conn.execute("""
         SELECT
+            account_id,
             COUNT(*) as rows,
             COUNT(DISTINCT video_id) as videos,
             MIN(date) as min_date,
             MAX(date) as max_date
         FROM daily_analytics
-        WHERE LOWER(account_name) = 'intranet'
-    """).fetchone()
+        GROUP BY account_id
+        ORDER BY account_id
+    """).fetchall()
 
-    if result[0] > 0:
-        print(f"   Rows: {result[0]:,}")
-        print(f"   Videos: {result[1]:,}")
-        print(f"   Date range: {result[2]} to {result[3]}")
-    else:
-        print("   NO DATA FOUND FOR INTRANET!")
-
-        # Check what account names exist
-        print("\n   Available account names:")
-        results = conn.execute("SELECT DISTINCT account_name FROM daily_analytics ORDER BY account_name").fetchall()
-        for row in results:
-            print(f"     - {row[0]}")
+    for row in results:
+        print(f"   Account {row[0]}: {row[1]:,} rows, {row[2]:,} videos, {row[3]} to {row[4]}")
 
     conn.close()
     print("\n" + "=" * 70)
