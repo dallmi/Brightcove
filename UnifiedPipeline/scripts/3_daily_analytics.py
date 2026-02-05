@@ -341,6 +341,8 @@ def process_year(
         will_skip_created_after = 0
         will_skip_has_data = 0
         will_process = 0
+        found_in_duckdb = 0
+        not_in_duckdb = 0
 
         for video in videos:
             video_id = str(video.get("id"))
@@ -357,20 +359,29 @@ def process_year(
             # Check if has data in DuckDB
             last_processed = video_max_dates.get(key)
             if last_processed:
+                found_in_duckdb += 1
                 start_date = calculate_overlap_start_date(last_processed, year_start, overlap_days)
                 if start_date > year_end or last_processed >= year_end:
                     will_skip_has_data += 1
                     continue
+            else:
+                not_in_duckdb += 1
 
             will_process += 1
 
         logger.info(f"  Videos created after {year_end}: {will_skip_created_after} (will skip)")
+        logger.info(f"  Videos found in DuckDB: {found_in_duckdb}")
+        logger.info(f"  Videos NOT in DuckDB: {not_in_duckdb}")
         logger.info(f"  Videos with complete data: {will_skip_has_data} (will skip)")
         logger.info(f"  Videos needing API calls: {will_process}")
         logger.info(f"  Estimated time: ~{will_process * 2.5 / 60:.1f} minutes (assuming 2.5s per API call)")
 
         if will_process > 500:
             logger.warning(f"  This will make {will_process} API calls - consider if this is expected!")
+
+        # Sanity check
+        if found_in_duckdb < will_skip_has_data:
+            logger.error(f"  ERROR: Found {found_in_duckdb} in DuckDB but skipping {will_skip_has_data} - logic error!")
 
         rows_written = 0
         batch_rows = []
