@@ -340,6 +340,12 @@ def process_year(
         batch_rows = []
         batch_size = 100  # Commit every N videos
 
+        # Skip counters for diagnostics
+        skip_created_after = 0
+        skip_start_beyond_end = 0
+        skip_already_complete = 0
+        api_calls_made = 0
+
         # Debug: show first video key for comparison
         first_video_logged = False
 
@@ -353,6 +359,7 @@ def process_year(
                 # Extract just the date part (YYYY-MM-DD) from ISO timestamp
                 created_date = created_at[:10] if len(created_at) >= 10 else ""
                 if created_date > year_end:
+                    skip_created_after += 1
                     continue  # Video didn't exist in this year
 
             # Get last processed date for this video
@@ -377,11 +384,16 @@ def process_year(
 
             # Skip if start_date is beyond year_end
             if start_date > year_end:
+                skip_start_beyond_end += 1
                 continue
 
             # Only fetch if within this year's range
             if last_processed and last_processed >= year_end:
+                skip_already_complete += 1
                 continue
+
+            # If we reach here, we're making an API call
+            api_calls_made += 1
 
             try:
                 # Fetch analytics
@@ -443,6 +455,7 @@ def process_year(
 
         total_rows += rows_written
         logger.info(f"Completed {account_name} {year}: {rows_written} rows")
+        logger.info(f"  Skip stats: created_after={skip_created_after}, start>end={skip_start_beyond_end}, already_complete={skip_already_complete}, API_calls={api_calls_made}")
 
     return total_rows
 
