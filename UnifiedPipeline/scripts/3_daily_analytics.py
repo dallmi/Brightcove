@@ -393,9 +393,6 @@ def process_year(
         skip_already_complete = 0
         api_calls_made = 0
 
-        # Debug: show first video key for comparison
-        first_video_logged = False
-
         for video in tqdm(videos, desc=f"{account_name} {year}"):
             video_id = str(video.get("id"))  # Convert to string to match DuckDB keys
             key = (str(account_id), video_id)
@@ -418,16 +415,6 @@ def process_year(
                 year_start=year_start,
                 overlap_days=overlap_days
             )
-
-            # Debug: log first video for this account (only for videos not skipped by created_at)
-            if not first_video_logged:
-                logger.info(f"DEBUG: First lookup key for {account_name}: {key}")
-                logger.info(f"DEBUG: Key in video_max_dates? {key in video_max_dates}")
-                logger.info(f"DEBUG: last_processed = {last_processed}, year_end = {year_end}")
-                logger.info(f"DEBUG: start_date = {start_date}")
-                logger.info(f"DEBUG: Would skip (start>end)? {start_date > year_end}")
-                logger.info(f"DEBUG: Would skip (last>=end)? {last_processed and last_processed >= year_end}")
-                first_video_logged = True
 
             # Skip if start_date is beyond year_end
             if start_date > year_end:
@@ -670,12 +657,6 @@ def main():
     # Get existing max dates for incremental processing
     video_max_dates = get_all_video_max_dates(conn)
     logger.info(f"Found {len(video_max_dates)} existing video records")
-
-    # Debug: show sample keys from video_max_dates
-    if video_max_dates:
-        sample_keys = list(video_max_dates.keys())[:3]
-        logger.info(f"DEBUG: Sample keys from DuckDB: {sample_keys}")
-        logger.info(f"DEBUG: Key types: account_id={type(sample_keys[0][0])}, video_id={type(sample_keys[0][1])}")
 
     # Process each year
     total_rows = 0
