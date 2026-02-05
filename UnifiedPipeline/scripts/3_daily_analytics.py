@@ -336,6 +336,10 @@ def process_year(
 
         logger.info(f"Processing {len(videos)} videos for {year_start} to {year_end}")
 
+        # Count how many videos in video_max_dates match this account
+        account_videos_in_db = sum(1 for (acc_id, vid_id) in video_max_dates.keys() if acc_id == str(account_id))
+        logger.info(f"Videos in video_max_dates for {account_name}: {account_videos_in_db}")
+
         # PRE-LOOP ANALYSIS: Count what will be skipped/processed
         logger.info("Analyzing videos before processing...")
         will_skip_created_after = 0
