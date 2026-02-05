@@ -336,6 +336,42 @@ def process_year(
 
         logger.info(f"Processing {len(videos)} videos for {year_start} to {year_end}")
 
+        # PRE-LOOP ANALYSIS: Count what will be skipped/processed
+        logger.info("Analyzing videos before processing...")
+        will_skip_created_after = 0
+        will_skip_has_data = 0
+        will_process = 0
+
+        for video in videos:
+            video_id = str(video.get("id"))
+            key = (str(account_id), video_id)
+
+            # Check created_at
+            created_at = video.get("created_at", "")
+            if created_at:
+                created_date = created_at[:10] if len(created_at) >= 10 else ""
+                if created_date > year_end:
+                    will_skip_created_after += 1
+                    continue
+
+            # Check if has data in DuckDB
+            last_processed = video_max_dates.get(key)
+            if last_processed:
+                start_date = calculate_overlap_start_date(last_processed, year_start, overlap_days)
+                if start_date > year_end or last_processed >= year_end:
+                    will_skip_has_data += 1
+                    continue
+
+            will_process += 1
+
+        logger.info(f"  Videos created after {year_end}: {will_skip_created_after} (will skip)")
+        logger.info(f"  Videos with complete data: {will_skip_has_data} (will skip)")
+        logger.info(f"  Videos needing API calls: {will_process}")
+        logger.info(f"  Estimated time: ~{will_process * 2.5 / 60:.1f} minutes (assuming 2.5s per API call)")
+
+        if will_process > 500:
+            logger.warning(f"  This will make {will_process} API calls - consider if this is expected!")
+
         rows_written = 0
         batch_rows = []
         batch_size = 100  # Commit every N videos
