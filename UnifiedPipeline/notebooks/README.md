@@ -1,10 +1,32 @@
-# Executive Video Analytics Notebook Guide
+# Video Analytics Notebooks & Reports
 
-This guide walks you through the `executive_video_analytics.ipynb` notebook, explaining each section and the business questions it answers.
+This directory contains analytics tools for both operational reporting and interview preparation.
 
-## Prerequisites
+## Available Tools
 
-Before running the notebook:
+### 1. **Executive Video Analytics** (`executive_video_analytics.ipynb`)
+- **Purpose:** Operational dashboard for regular video performance analysis
+- **Audience:** Communication teams, data scientists, executives
+- **Focus:** Current performance, top content, device trends
+
+### 2. **Business Impact Discovery** (`business_impact_discovery.ipynb`) 🆕
+- **Purpose:** Interview preparation - find concrete business impact examples
+- **Audience:** Analytics professionals preparing for interviews
+- **Focus:** ROI, strategic decisions, quantifiable business value
+
+### 3. **Quick Report Generator** (`../scripts/generate_interview_report.py`) 🆕
+- **Purpose:** Command-line report generation without Jupyter
+- **Output:** Text-based summary with key metrics for interviews
+
+### 4. **Business Impact Guide** (`BUSINESS_IMPACT_GUIDE.md`) 🆕
+- **Purpose:** How-to guide for translating analytics into interview responses
+- **Content:** STAR templates, talking points, metric checklists
+
+---
+
+## Quick Start
+
+### For Regular Analytics Work:
 
 1. **Complete the data pipeline** (scripts 1-3 or migration to DuckDB)
 2. **Install dependencies:**
@@ -16,6 +38,32 @@ Before running the notebook:
    cd UnifiedPipeline
    jupyter lab notebooks/executive_video_analytics.ipynb
    ```
+
+### For Interview Preparation:
+
+**Option A: Interactive Notebook (Recommended)**
+```bash
+cd UnifiedPipeline
+jupyter lab notebooks/business_impact_discovery.ipynb
+# Run all cells, review findings in each section
+```
+
+**Option B: Quick Command-Line Report**
+```bash
+cd UnifiedPipeline
+python scripts/generate_interview_report.py
+# Or save to file:
+python scripts/generate_interview_report.py --output my_report.txt
+```
+
+**Option C: Focus on Recent Data**
+```bash
+python scripts/generate_interview_report.py --date-filter 2024-01-01 --output 2024_report.txt
+```
+
+---
+
+## Executive Video Analytics Notebook
 
 ## Notebook Structure
 
