@@ -282,7 +282,7 @@ This cell analyzes the data and generates specific recommendations:
 ```sql
 -- Videos by specific channel
 SELECT * FROM daily_analytics
-WHERE channel = 'Internet' AND date >= '2026-01-01'
+WHERE channel = 'ChannelName' AND date >= '2026-01-01'
 LIMIT 100
 
 -- Weekly trends

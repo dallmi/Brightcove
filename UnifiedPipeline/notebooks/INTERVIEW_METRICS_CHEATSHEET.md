@@ -63,7 +63,7 @@ Use this as a quick lookup when preparing interview responses. Run the Business 
 
 **Where to find:** Section 1 (Executive Comms), Section 4 (Channel Rationalization)
 
-**Example:** "Research channel showed 88% engagement vs. 64% average—opportunity to scale"
+**Example:** "Channel B showed 88% engagement vs. 64% average—opportunity to scale"
 
 ---
 
