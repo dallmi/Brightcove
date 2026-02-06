@@ -410,6 +410,8 @@ def process_year(
         skip_created_after = 0
         skip_already_complete = 0
         api_calls_made = 0
+        api_empty_responses = 0
+        api_errors = 0
 
         for video in tqdm(videos, desc=f"{account_name} {year}"):
             video_id = str(video.get("id"))  # Convert to string to match DuckDB keys
@@ -465,6 +467,7 @@ def process_year(
                 )
 
                 if not summary:
+                    api_empty_responses += 1
                     continue
 
                 device_breakdown = fetch_daily_device_breakdown(
@@ -505,6 +508,7 @@ def process_year(
                     logger.debug("Checkpointed WAL to main DB")
 
             except Exception as e:
+                api_errors += 1
                 logger.warning(f"Failed video {video_id}: {e}")
                 continue
 
@@ -518,7 +522,12 @@ def process_year(
 
         total_rows += rows_written
         logger.info(f"Completed {account_name} {year}: {rows_written} rows")
-        logger.info(f"  Skip stats: created_after={skip_created_after}, already_complete={skip_already_complete}, API_calls={api_calls_made}")
+        logger.info(f"  Skip stats: created_after={skip_created_after}, already_complete={skip_already_complete}")
+        logger.info(f"  API stats: calls={api_calls_made}, empty_responses={api_empty_responses}, errors={api_errors}")
+
+        # Warn if ALL API calls returned empty - likely indicates a problem
+        if api_calls_made > 0 and api_empty_responses == api_calls_made:
+            logger.warning(f"  WARNING: ALL {api_calls_made} API calls returned empty data! Check auth/API status.")
 
     return total_rows
 
