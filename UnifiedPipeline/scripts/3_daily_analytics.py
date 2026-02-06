@@ -313,10 +313,18 @@ def process_year(
     year_start = f"{year}-01-01"
     year_end = f"{year}-12-31"
     today = datetime.now().strftime("%Y-%m-%d")
+    current_year = datetime.now().year
 
     # For current year, don't go past today
-    if year == datetime.now().year:
+    if year == current_year:
         year_end = min(year_end, today)
+
+    # Historical year optimization: for completed years, if a video has ANY data
+    # for that year, consider it complete (no need to re-fetch with overlap)
+    # This saves thousands of API calls for old videos with no recent activity
+    is_historical_year = year < current_year
+    if is_historical_year:
+        logger.info(f"Historical year mode: videos with ANY {year} data will be skipped")
 
     for account_name, account_config in accounts.items():
         account_id = account_config['account_id']
@@ -364,10 +372,16 @@ def process_year(
             last_processed = video_max_dates.get(key)
             if last_processed:
                 found_in_duckdb += 1
-                start_date = calculate_overlap_start_date(last_processed, year_start, overlap_days)
-                if start_date > year_end or last_processed >= year_end:
+                # For historical years: ANY data = complete (skip)
+                # For current year: use overlap logic
+                if is_historical_year:
                     will_skip_has_data += 1
                     continue
+                else:
+                    start_date = calculate_overlap_start_date(last_processed, year_start, overlap_days)
+                    if start_date > year_end or last_processed >= year_end:
+                        will_skip_has_data += 1
+                        continue
             else:
                 not_in_duckdb += 1
 
@@ -376,7 +390,8 @@ def process_year(
         logger.info(f"  Videos created after {year_end}: {will_skip_created_after} (will skip)")
         logger.info(f"  Videos found in DuckDB: {found_in_duckdb}")
         logger.info(f"  Videos NOT in DuckDB: {not_in_duckdb}")
-        logger.info(f"  Videos with complete data: {will_skip_has_data} (will skip)")
+        skip_reason = "any data (historical)" if is_historical_year else "complete data"
+        logger.info(f"  Videos with {skip_reason}: {will_skip_has_data} (will skip)")
         logger.info(f"  Videos needing API calls: {will_process}")
         logger.info(f"  Estimated time: ~{will_process * 2.5 / 60:.1f} minutes (assuming 2.5s per API call)")
 
@@ -393,7 +408,6 @@ def process_year(
 
         # Skip counters for diagnostics
         skip_created_after = 0
-        skip_start_beyond_end = 0
         skip_already_complete = 0
         api_calls_made = 0
 
@@ -413,22 +427,26 @@ def process_year(
             # Get last processed date for this video
             last_processed = video_max_dates.get(key)
 
-            # Calculate start date with overlap
-            start_date = calculate_overlap_start_date(
-                last_processed_date=last_processed,
-                year_start=year_start,
-                overlap_days=overlap_days
-            )
-
-            # Skip if start_date is beyond year_end
-            if start_date > year_end:
-                skip_start_beyond_end += 1
-                continue
-
-            # Only fetch if within this year's range
-            if last_processed and last_processed >= year_end:
-                skip_already_complete += 1
-                continue
+            # For historical years: ANY data = complete (skip)
+            # For current year: use overlap logic
+            if last_processed:
+                if is_historical_year:
+                    # Historical year: skip if has ANY data for this year
+                    skip_already_complete += 1
+                    continue
+                else:
+                    # Current year: use overlap logic
+                    start_date = calculate_overlap_start_date(
+                        last_processed_date=last_processed,
+                        year_start=year_start,
+                        overlap_days=overlap_days
+                    )
+                    if start_date > year_end or last_processed >= year_end:
+                        skip_already_complete += 1
+                        continue
+            else:
+                # No data for this year - start from beginning
+                start_date = year_start
 
             # If we reach here, we're making an API call
             api_calls_made += 1
@@ -500,7 +518,7 @@ def process_year(
 
         total_rows += rows_written
         logger.info(f"Completed {account_name} {year}: {rows_written} rows")
-        logger.info(f"  Skip stats: created_after={skip_created_after}, start>end={skip_start_beyond_end}, already_complete={skip_already_complete}, API_calls={api_calls_made}")
+        logger.info(f"  Skip stats: created_after={skip_created_after}, already_complete={skip_already_complete}, API_calls={api_calls_made}")
 
     return total_rows
 
