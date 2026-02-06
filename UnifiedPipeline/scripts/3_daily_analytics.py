@@ -378,6 +378,7 @@ def process_year(
         # PRE-LOOP ANALYSIS: Count what will be skipped/processed
         logger.info("Analyzing videos before processing...")
         will_skip_created_after = 0
+        will_skip_no_views = 0
         will_skip_has_data = 0
         will_process = 0
         found_in_duckdb = 0
@@ -394,6 +395,16 @@ def process_year(
                 if created_date > year_end:
                     will_skip_created_after += 1
                     continue
+
+            # For historical years: skip if dt_last_viewed < year_start
+            # These videos had no views in this year, so no data to fetch
+            if is_historical_year:
+                dt_last_viewed = video.get("dt_last_viewed", "")
+                if dt_last_viewed:
+                    last_viewed_date = dt_last_viewed[:10] if len(dt_last_viewed) >= 10 else ""
+                    if last_viewed_date and last_viewed_date < year_start:
+                        will_skip_no_views += 1
+                        continue
 
             # Check if has data in DuckDB
             last_processed = video_max_dates.get(key)
@@ -415,6 +426,8 @@ def process_year(
             will_process += 1
 
         logger.info(f"  Videos created after {year_end}: {will_skip_created_after} (will skip)")
+        if is_historical_year:
+            logger.info(f"  Videos with no views in {year} (dt_last_viewed): {will_skip_no_views} (will skip)")
         logger.info(f"  Videos found in DuckDB: {found_in_duckdb}")
         logger.info(f"  Videos NOT in DuckDB: {not_in_duckdb}")
         skip_reason = "any data (historical)" if is_historical_year else "complete data"
@@ -435,6 +448,7 @@ def process_year(
 
         # Skip counters for diagnostics
         skip_created_after = 0
+        skip_no_views = 0
         skip_already_complete = 0
         api_calls_made = 0
         api_empty_responses = 0
@@ -452,6 +466,16 @@ def process_year(
                 if created_date > year_end:
                     skip_created_after += 1
                     continue  # Video didn't exist in this year
+
+            # For historical years: skip if dt_last_viewed < year_start
+            # These videos had no views in this year, so no data to fetch
+            if is_historical_year:
+                dt_last_viewed = video.get("dt_last_viewed", "")
+                if dt_last_viewed:
+                    last_viewed_date = dt_last_viewed[:10] if len(dt_last_viewed) >= 10 else ""
+                    if last_viewed_date and last_viewed_date < year_start:
+                        skip_no_views += 1
+                        continue
 
             # Get last processed date for this video
             last_processed = video_max_dates.get(key)
@@ -555,7 +579,7 @@ def process_year(
 
         total_rows += rows_written
         logger.info(f"Completed {account_name} {year}: {rows_written} rows")
-        logger.info(f"  Skip stats: created_after={skip_created_after}, already_complete={skip_already_complete}")
+        logger.info(f"  Skip stats: created_after={skip_created_after}, no_views={skip_no_views}, already_complete={skip_already_complete}")
         logger.info(f"  API stats: calls={api_calls_made}, empty_responses={api_empty_responses}, errors={api_errors}")
 
         # Warn if ALL API calls returned empty - likely indicates a problem
