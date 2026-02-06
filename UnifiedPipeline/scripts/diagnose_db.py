@@ -145,11 +145,41 @@ def check_wal_backup(db_path, wal_backup_path, account_name, script_dir):
                 print(f"  NOT in WAL either: {len(still_missing):,}")
 
                 if still_missing:
-                    print(f"\n  These {len(still_missing):,} videos were never processed:")
-                    for vid in list(still_missing)[:10]:
-                        print(f"    {vid}")
-                    if len(still_missing) > 10:
-                        print(f"    ... and {len(still_missing) - 10} more")
+                    print(f"\n  These {len(still_missing):,} videos were never processed.")
+
+                    # Check created_at dates from CMS for these missing videos
+                    cms_by_id = {str(v.get('id')): v for v in cms_videos}
+                    created_2025 = 0
+                    created_2024 = 0
+                    created_earlier = 0
+                    no_created_at = 0
+
+                    for vid in still_missing:
+                        v = cms_by_id.get(vid, {})
+                        created_at = v.get('created_at', '')[:10] if v.get('created_at') else ''
+                        if not created_at:
+                            no_created_at += 1
+                        elif created_at >= '2025-01-01':
+                            created_2025 += 1
+                        elif created_at >= '2024-01-01':
+                            created_2024 += 1
+                        else:
+                            created_earlier += 1
+
+                    print(f"\n  When were these missing videos created?")
+                    print(f"    Created in 2025: {created_2025:,}")
+                    print(f"    Created in 2024: {created_2024:,}")
+                    print(f"    Created earlier: {created_earlier:,}")
+                    print(f"    No created_at:   {no_created_at:,}")
+
+                    if created_2025 > 0:
+                        print(f"\n  --> {created_2025:,} videos were created in 2025.")
+                        print(f"      They were correctly SKIPPED for 2024 (didn't exist yet).")
+                        print(f"      They should be processed when 2025 runs.")
+
+                    if created_2024 > 0 or created_earlier > 0:
+                        print(f"\n  --> {created_2024 + created_earlier:,} videos SHOULD have been processed for 2024!")
+                        print(f"      This indicates a bug or incomplete run.")
 
         except Exception as e:
             print(f"ERROR recovering WAL: {e}")
