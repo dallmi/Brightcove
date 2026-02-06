@@ -478,10 +478,13 @@ def process_year(
                     max_date = max(r["date"] for r in rows)
                     video_max_dates[key] = max_date
 
-                # Batch commit
+                # Batch commit with periodic checkpoint
                 if len(batch_rows) >= batch_size * 30:  # ~30 days per video avg
                     upsert_daily_analytics(conn, batch_rows, logger)
                     batch_rows = []
+                    # Periodic checkpoint to merge WAL into main DB
+                    conn.execute("CHECKPOINT")
+                    logger.debug("Checkpointed WAL to main DB")
 
             except Exception as e:
                 logger.warning(f"Failed video {video_id}: {e}")
@@ -490,6 +493,10 @@ def process_year(
         # Final batch commit
         if batch_rows:
             upsert_daily_analytics(conn, batch_rows, logger)
+
+        # Checkpoint after each account completes to persist changes
+        logger.info(f"Checkpointing {account_name} {year} to disk...")
+        conn.execute("CHECKPOINT")
 
         total_rows += rows_written
         logger.info(f"Completed {account_name} {year}: {rows_written} rows")
