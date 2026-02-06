@@ -185,6 +185,64 @@ def main():
             for status, count in result:
                 print(f"  {status}: {count:,} videos")
 
+            # For partial_2024 videos, show when their last activity was
+            result = conn.execute("""
+                WITH video_status AS (
+                    SELECT video_id, MAX(date) as max_date, MIN(date) as min_date
+                    FROM daily_analytics
+                    WHERE account_id = ?
+                    GROUP BY video_id
+                    HAVING MAX(date) < '2024-12-31' AND MAX(date) >= '2024-01-01'
+                )
+                SELECT
+                    CASE
+                        WHEN max_date >= '2024-12-01' THEN '2024-12 (Dec)'
+                        WHEN max_date >= '2024-11-01' THEN '2024-11 (Nov)'
+                        WHEN max_date >= '2024-10-01' THEN '2024-10 (Oct)'
+                        WHEN max_date >= '2024-07-01' THEN '2024 Q3 (Jul-Sep)'
+                        WHEN max_date >= '2024-04-01' THEN '2024 Q2 (Apr-Jun)'
+                        ELSE '2024 Q1 (Jan-Mar)'
+                    END as last_activity,
+                    COUNT(*) as videos
+                FROM video_status
+                GROUP BY last_activity
+                ORDER BY last_activity DESC
+            """, [target_id]).fetchall()
+
+            if result:
+                print(f"\nPartial 2024 videos - last activity month:")
+                for row in result:
+                    print(f"  {row[0]}: {row[1]:,} videos")
+
+            # Also check: how many videos in CMS but NOT in DB?
+            cms_path = script_dir.parent / 'output' / 'analytics' / f'{args.account}_cms_enriched.json'
+            if cms_path.exists():
+                import json
+                with open(cms_path) as f:
+                    cms_videos = json.load(f)
+
+                # Get all video IDs from DB for this account
+                db_video_ids = set(row[0] for row in conn.execute(
+                    "SELECT DISTINCT video_id FROM daily_analytics WHERE account_id = ?",
+                    [target_id]
+                ).fetchall())
+
+                cms_video_ids = set(str(v.get('id')) for v in cms_videos)
+
+                in_cms_not_db = cms_video_ids - db_video_ids
+                in_db_not_cms = db_video_ids - cms_video_ids
+
+                print(f"\nCMS vs DB comparison:")
+                print(f"  Videos in CMS file: {len(cms_video_ids):,}")
+                print(f"  Videos in DB: {len(db_video_ids):,}")
+                print(f"  In CMS but NOT in DB: {len(in_cms_not_db):,}")
+                print(f"  In DB but NOT in CMS: {len(in_db_not_cms):,}")
+
+                if in_cms_not_db:
+                    print(f"\n  Sample videos in CMS but not DB (first 5):")
+                    for vid in list(in_cms_not_db)[:5]:
+                        print(f"    {vid}")
+
             # Sample raw keys
             print(f"\nSample (account_id, video_id) keys from DB:")
             result = conn.execute("""
