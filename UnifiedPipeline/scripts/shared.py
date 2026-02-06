@@ -714,7 +714,8 @@ def get_max_date_for_video(
 
 def get_all_video_max_dates(
     conn: 'duckdb.DuckDBPyConnection',
-    account_id: Optional[str] = None
+    account_id: Optional[str] = None,
+    year: Optional[int] = None
 ) -> Dict[Tuple[str, str], str]:
     """
     Get max dates for all videos in the database.
@@ -722,23 +723,46 @@ def get_all_video_max_dates(
     Args:
         conn: DuckDB connection
         account_id: Optional filter by account
+        year: Optional filter by year (only consider data within this year)
 
     Returns:
         Dict mapping (account_id, video_id) -> max_date
     """
-    if account_id:
-        result = conn.execute("""
-            SELECT account_id, video_id, MAX(date)::VARCHAR as max_date
-            FROM daily_analytics
-            WHERE account_id = ?
-            GROUP BY account_id, video_id
-        """, [account_id]).fetchall()
+    # Build query based on filters
+    if year:
+        year_start = f"{year}-01-01"
+        year_end = f"{year}-12-31"
+        if account_id:
+            result = conn.execute("""
+                SELECT account_id, video_id, MAX(date)::VARCHAR as max_date
+                FROM daily_analytics
+                WHERE account_id = ?
+                  AND date >= ?::DATE
+                  AND date <= ?::DATE
+                GROUP BY account_id, video_id
+            """, [account_id, year_start, year_end]).fetchall()
+        else:
+            result = conn.execute("""
+                SELECT account_id, video_id, MAX(date)::VARCHAR as max_date
+                FROM daily_analytics
+                WHERE date >= ?::DATE
+                  AND date <= ?::DATE
+                GROUP BY account_id, video_id
+            """, [year_start, year_end]).fetchall()
     else:
-        result = conn.execute("""
-            SELECT account_id, video_id, MAX(date)::VARCHAR as max_date
-            FROM daily_analytics
-            GROUP BY account_id, video_id
-        """).fetchall()
+        if account_id:
+            result = conn.execute("""
+                SELECT account_id, video_id, MAX(date)::VARCHAR as max_date
+                FROM daily_analytics
+                WHERE account_id = ?
+                GROUP BY account_id, video_id
+            """, [account_id]).fetchall()
+        else:
+            result = conn.execute("""
+                SELECT account_id, video_id, MAX(date)::VARCHAR as max_date
+                FROM daily_analytics
+                GROUP BY account_id, video_id
+            """).fetchall()
 
     return {(row[0], row[1]): row[2] for row in result}
 

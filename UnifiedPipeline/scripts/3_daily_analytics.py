@@ -665,16 +665,18 @@ def main():
     # Initialize DuckDB
     conn = init_analytics_db(db_path)
 
-    # Get existing max dates for incremental processing
-    video_max_dates = get_all_video_max_dates(conn)
-    logger.info(f"Found {len(video_max_dates)} existing video records")
-
     # Process each year
     total_rows = 0
     for year in all_years:
         logger.info(f"\n{'#'*60}")
         logger.info(f"YEAR: {year}")
         logger.info(f"{'#'*60}")
+
+        # Get year-specific max dates for incremental processing
+        # This fixes a bug where videos with 2025 data but no 2024 data
+        # were incorrectly skipped when processing 2024
+        video_max_dates = get_all_video_max_dates(conn, year=year)
+        logger.info(f"Found {len(video_max_dates)} videos with {year} data")
 
         year_rows = process_year(
             year=year,
