@@ -8,10 +8,163 @@ import sys
 import argparse
 from pathlib import Path
 
+def check_wal_backup(db_path, wal_backup_path, account_name, script_dir):
+    """
+    Check a WAL backup file for missing videos.
+
+    This creates a temporary copy of the DB + WAL to see what data
+    would have been in the WAL before recovery.
+    """
+    import duckdb
+    import tempfile
+    import shutil
+    import json
+
+    wal_backup = Path(wal_backup_path)
+    if not wal_backup.exists():
+        print(f"ERROR: WAL backup not found: {wal_backup}")
+        return 1
+
+    # Load account config to get account ID
+    config_path = script_dir.parent / 'config' / 'accounts.json'
+    if not config_path.exists():
+        print("ERROR: accounts.json not found")
+        return 1
+
+    with open(config_path) as f:
+        config = json.load(f)
+
+    target_id = None
+    if account_name:
+        for name, acc in config.get('accounts', {}).items():
+            if name.lower() == account_name.lower():
+                target_id = str(acc.get('account_id', ''))
+                break
+        if not target_id:
+            print(f"ERROR: Account '{account_name}' not found")
+            return 1
+
+    print("=" * 60)
+    print("WAL BACKUP ANALYSIS")
+    print("=" * 60)
+    print(f"WAL backup: {wal_backup}")
+    print(f"WAL size: {wal_backup.stat().st_size / (1024*1024):.1f} MB")
+    print()
+
+    # Get missing video IDs from current DB vs CMS
+    print("Loading current DB and CMS data...")
+    conn_current = duckdb.connect(str(db_path), read_only=True)
+
+    if target_id:
+        db_video_ids = set(row[0] for row in conn_current.execute(
+            "SELECT DISTINCT video_id FROM daily_analytics WHERE account_id = ?",
+            [target_id]
+        ).fetchall())
+    else:
+        db_video_ids = set(row[0] for row in conn_current.execute(
+            "SELECT DISTINCT video_id FROM daily_analytics"
+        ).fetchall())
+    conn_current.close()
+
+    # Load CMS
+    cms_path = script_dir.parent / 'output' / 'analytics' / f'{account_name}_cms_enriched.json'
+    if cms_path.exists():
+        with open(cms_path) as f:
+            cms_videos = json.load(f)
+        cms_video_ids = set(str(v.get('id')) for v in cms_videos)
+        missing_from_db = cms_video_ids - db_video_ids
+        print(f"Videos in CMS: {len(cms_video_ids):,}")
+        print(f"Videos in current DB: {len(db_video_ids):,}")
+        print(f"Missing from DB: {len(missing_from_db):,}")
+    else:
+        print(f"CMS file not found: {cms_path}")
+        missing_from_db = set()
+
+    # Create temp directory and copy DB + WAL
+    print()
+    print("Creating temporary DB with WAL to analyze...")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_db = Path(tmpdir) / "temp_analytics.duckdb"
+        tmp_wal = Path(tmpdir) / "temp_analytics.duckdb.wal"
+
+        # Copy the main DB file
+        shutil.copy(db_path, tmp_db)
+        # Copy the WAL backup as the WAL file
+        shutil.copy(wal_backup, tmp_wal)
+
+        try:
+            # Open the DB - DuckDB will automatically recover the WAL
+            conn_with_wal = duckdb.connect(str(tmp_db))
+
+            if target_id:
+                wal_video_ids = set(row[0] for row in conn_with_wal.execute(
+                    "SELECT DISTINCT video_id FROM daily_analytics WHERE account_id = ?",
+                    [target_id]
+                ).fetchall())
+
+                # Get stats
+                result = conn_with_wal.execute("""
+                    SELECT COUNT(*), COUNT(DISTINCT video_id), MIN(date), MAX(date)
+                    FROM daily_analytics WHERE account_id = ?
+                """, [target_id]).fetchone()
+            else:
+                wal_video_ids = set(row[0] for row in conn_with_wal.execute(
+                    "SELECT DISTINCT video_id FROM daily_analytics"
+                ).fetchall())
+
+                result = conn_with_wal.execute("""
+                    SELECT COUNT(*), COUNT(DISTINCT video_id), MIN(date), MAX(date)
+                    FROM daily_analytics
+                """).fetchone()
+
+            conn_with_wal.close()
+
+            print(f"\nDB + WAL recovered stats:")
+            print(f"  Total rows: {result[0]:,}")
+            print(f"  Unique videos: {result[1]:,}")
+            print(f"  Date range: {result[2]} to {result[3]}")
+
+            # Compare
+            videos_in_wal_not_db = wal_video_ids - db_video_ids
+            videos_in_db_not_wal = db_video_ids - wal_video_ids
+
+            print(f"\nComparison (DB+WAL vs current DB):")
+            print(f"  Videos in DB+WAL: {len(wal_video_ids):,}")
+            print(f"  Videos in current DB: {len(db_video_ids):,}")
+            print(f"  In WAL but not current DB: {len(videos_in_wal_not_db):,}")
+            print(f"  In current DB but not WAL: {len(videos_in_db_not_wal):,}")
+
+            if missing_from_db:
+                # Check how many of the CMS-missing videos are in the WAL
+                missing_found_in_wal = missing_from_db & wal_video_ids
+                still_missing = missing_from_db - wal_video_ids
+
+                print(f"\nOf the {len(missing_from_db):,} videos missing from current DB:")
+                print(f"  Found in WAL backup: {len(missing_found_in_wal):,}")
+                print(f"  NOT in WAL either: {len(still_missing):,}")
+
+                if still_missing:
+                    print(f"\n  These {len(still_missing):,} videos were never processed:")
+                    for vid in list(still_missing)[:10]:
+                        print(f"    {vid}")
+                    if len(still_missing) > 10:
+                        print(f"    ... and {len(still_missing) - 10} more")
+
+        except Exception as e:
+            print(f"ERROR recovering WAL: {e}")
+            return 1
+
+    print()
+    print("WAL analysis complete.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Diagnose DuckDB analytics database")
     parser.add_argument('--db', type=str, help='Path to DuckDB file (default: output/analytics.duckdb)')
     parser.add_argument('--account', type=str, help='Focus on specific account name')
+    parser.add_argument('--check-wal-backup', type=str, help='Check WAL backup file for missing videos')
     args = parser.parse_args()
 
     # Determine DB path
@@ -31,6 +184,11 @@ def main():
         return 1
 
     import duckdb
+
+    # Handle --check-wal-backup mode
+    if args.check_wal_backup:
+        return check_wal_backup(db_path, args.check_wal_backup, args.account, script_dir)
+
     conn = duckdb.connect(str(db_path), read_only=True)
 
     print("=" * 60)
