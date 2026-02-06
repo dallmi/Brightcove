@@ -80,6 +80,32 @@ SCRIPT_NAME = "3_daily_analytics"
 
 
 # =============================================================================
+# ERROR LOGGING
+# =============================================================================
+
+def init_error_log(output_dir: Path, account: Optional[str] = None) -> Path:
+    """Initialize error log file with headers. Returns path to log file."""
+    suffix = f"_{account}" if account else ""
+    log_path = output_dir / f"analytics_errors{suffix}.csv"
+
+    # Write headers (overwrite any existing file)
+    with open(log_path, 'w') as f:
+        f.write("timestamp,account,year,video_id,issue_type,details\n")
+
+    return log_path
+
+
+def log_api_issue(log_path: Path, account: str, year: int, video_id: str,
+                  issue_type: str, details: str = ""):
+    """Append an API issue to the error log."""
+    timestamp = datetime.now().isoformat()
+    # Escape any commas in details
+    details_escaped = details.replace('"', '""')
+    with open(log_path, 'a') as f:
+        f.write(f'{timestamp},{account},{year},{video_id},{issue_type},"{details_escaped}"\n')
+
+
+# =============================================================================
 # ANALYTICS API CALLS
 # =============================================================================
 
@@ -297,7 +323,8 @@ def process_year(
     conn,
     video_max_dates: Dict,
     overlap_days: int,
-    logger
+    logger,
+    error_log_path: Optional[Path] = None
 ) -> int:
     """
     Process a single year for all accounts.
@@ -468,6 +495,9 @@ def process_year(
 
                 if not summary:
                     api_empty_responses += 1
+                    if error_log_path:
+                        log_api_issue(error_log_path, account_name, year, video_id,
+                                      "empty_response", f"from={start_date} to={year_end}")
                     continue
 
                 device_breakdown = fetch_daily_device_breakdown(
@@ -510,6 +540,9 @@ def process_year(
             except Exception as e:
                 api_errors += 1
                 logger.warning(f"Failed video {video_id}: {e}")
+                if error_log_path:
+                    log_api_issue(error_log_path, account_name, year, video_id,
+                                  "error", str(e))
                 continue
 
         # Final batch commit
@@ -692,6 +725,10 @@ def main():
     # Initialize DuckDB
     conn = init_analytics_db(db_path)
 
+    # Initialize error log for tracking API issues
+    error_log_path = init_error_log(paths['output'], single_account if single_account_mode else None)
+    logger.info(f"Error log: {error_log_path.name}")
+
     # Process each year
     total_rows = 0
     for year in all_years:
@@ -715,7 +752,8 @@ def main():
             conn=conn,
             video_max_dates=video_max_dates,
             overlap_days=overlap_days,
-            logger=logger
+            logger=logger,
+            error_log_path=error_log_path
         )
         total_rows += year_rows
 
@@ -738,6 +776,13 @@ def main():
     if single_account_mode:
         logger.info(f"\nNote: Account-specific DB created for parallel processing.")
         logger.info(f"Run merge_analytics_dbs.py after all accounts complete to combine.")
+
+    # Check error log for issues
+    error_count = sum(1 for _ in open(error_log_path)) - 1  # Subtract header
+    if error_count > 0:
+        logger.warning(f"\nAPI issues logged: {error_count:,} (see {error_log_path.name})")
+    else:
+        logger.info(f"\nNo API issues encountered.")
 
 
 if __name__ == "__main__":
