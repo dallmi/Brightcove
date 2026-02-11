@@ -43,6 +43,10 @@ logs/
 .DS_Store
 Thumbs.db
 
+# Presentations
+UnifiedPipeline/output/KeyInsights_Presentation.pptx
+UnifiedPipeline/scripts/generate_pptx.py
+
 # IDE
 .vscode/
 .idea/
