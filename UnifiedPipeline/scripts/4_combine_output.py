@@ -1,20 +1,21 @@
 """
-4_combine_output.py - Generate final CSV outputs from checkpoints
+4_combine_output.py - Generate final CSV outputs from DuckDB
 
 Purpose:
-    Combines historical (2024+2025) and current (2026) checkpoint data
-    into final CSV outputs grouped by business category.
+    Reads daily analytics from DuckDB and generates CSV outputs
+    grouped by year and business category.
 
-Runtime: ~2-5 minutes
+Runtime: ~1-3 minutes
 
 Features:
-    - Merges historical + current checkpoint files
+    - Reads directly from DuckDB (output/analytics.duckdb)
     - Generates separate CSVs by category and by year
     - Proper column ordering matching Reporting + Harper fields
+    - Supports --account flag for account-specific DuckDB files
 
 Input:
-    - checkpoints/daily_historical.jsonl (2024 + 2025 data)
-    - checkpoints/daily_current.jsonl (2026 data)
+    - output/analytics.duckdb (from script 3)
+    - OR output/analytics_{account}.duckdb (with --account flag)
     - config/accounts.json (for category grouping)
 
 Output:
@@ -40,7 +41,8 @@ from shared import (
     load_config,
     setup_logging,
     get_output_paths,
-    load_checkpoint_jsonl,
+    init_analytics_db,
+    get_db_stats,
 )
 
 # =============================================================================
@@ -106,11 +108,14 @@ def write_csv(rows: List[Dict], output_path: Path, logger) -> int:
     return len(rows)
 
 
-def extract_year_from_date(date_str: str) -> str:
-    """Extract year from date string."""
-    if not date_str:
+def extract_year_from_date(date_val) -> str:
+    """Extract year from date value (string or date object)."""
+    if not date_val:
         return "unknown"
-    return date_str[:4]
+    date_str = str(date_val)
+    if len(date_str) >= 4:
+        return date_str[:4]
+    return "unknown"
 
 
 # =============================================================================
@@ -120,13 +125,13 @@ def extract_year_from_date(date_str: str) -> str:
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Generate final CSV outputs from checkpoints",
+        description="Generate final CSV outputs from DuckDB",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-This script combines historical and current checkpoint data into final CSV outputs.
+This script reads analytics data from DuckDB and generates CSV outputs.
 
 Features:
-    - Merges all checkpoint files (including account-specific files)
+    - Reads directly from DuckDB (no JSONL files needed)
     - Generates separate CSVs by category and by year
     - Proper column ordering matching Reporting + Harper fields
 
@@ -136,18 +141,23 @@ Output:
     - output/daily/daily_analytics_combined_all.csv
         """
     )
+    parser.add_argument(
+        '--account',
+        type=str,
+        help='Use account-specific DuckDB file (analytics_{account}.duckdb)'
+    )
     return parser.parse_args()
 
 
 def main():
     # Parse arguments (enables --help)
-    parse_args()
+    args = parse_args()
 
     # Setup
     paths = get_output_paths()
     logger = setup_logging(paths['logs'], SCRIPT_NAME)
     logger.info("=" * 60)
-    logger.info("Starting output generation")
+    logger.info("Starting output generation (DuckDB source)")
     logger.info("=" * 60)
 
     # Load configuration
@@ -160,34 +170,51 @@ def main():
         for account in category_config.get('accounts', []):
             channel_to_category[account] = category_name
 
-    # Load checkpoint files (including account-specific files for parallel processing)
-    all_rows = []
-
-    # Find all historical checkpoint files (main + account-specific)
-    # Patterns: daily_historical.jsonl, daily_historical_Internet.jsonl, etc.
-    historical_files = sorted(paths['checkpoints'].glob("daily_historical*.jsonl"))
-
-    if historical_files:
-        for hist_file in historical_files:
-            historical_rows = load_checkpoint_jsonl(hist_file)
-            logger.info(f"Loaded {len(historical_rows)} rows from {hist_file.name}")
-            all_rows.extend(historical_rows)
+    # Determine DuckDB path
+    if args.account:
+        db_path = paths['output'] / f"analytics_{args.account}.duckdb"
     else:
-        logger.info("No historical checkpoint found")
+        db_path = paths['output'] / "analytics.duckdb"
 
-    # Load current checkpoint
-    current_path = paths['checkpoints'] / "daily_current.jsonl"
+    logger.info(f"DuckDB source: {db_path}")
 
-    if current_path.exists():
-        current_rows = load_checkpoint_jsonl(current_path)
-        logger.info(f"Loaded {len(current_rows)} current year rows")
-        all_rows.extend(current_rows)
-    else:
-        logger.info("No current year checkpoint found")
-
-    if not all_rows:
-        logger.warning("No data found in any checkpoint")
+    if not db_path.exists():
+        logger.error(f"DuckDB file not found: {db_path}")
+        logger.error("Run script 3 (3_daily_analytics.py) first to populate the database.")
         return
+
+    # Open DuckDB connection
+    conn = init_analytics_db(db_path)
+
+    # Show DB stats
+    stats = get_db_stats(conn)
+    logger.info(f"DuckDB stats:")
+    logger.info(f"  Total rows: {stats['total_rows']:,}")
+    logger.info(f"  Unique videos: {stats['unique_videos']:,}")
+    if stats['date_range'][0]:
+        logger.info(f"  Date range: {stats['date_range'][0]} to {stats['date_range'][1]}")
+
+    if stats['total_rows'] == 0:
+        logger.error("DuckDB is empty. Run script 3 first.")
+        conn.close()
+        return
+
+    # Load all rows from DuckDB
+    logger.info("\nLoading data from DuckDB...")
+    result = conn.execute("""
+        SELECT * FROM daily_analytics
+        ORDER BY account_id, video_id, date
+    """).fetchdf()
+
+    conn.close()
+
+    # Convert DataFrame to list of dicts for CSV writing
+    all_rows = result.to_dict('records')
+
+    # Convert date objects to strings for CSV output
+    for row in all_rows:
+        if row.get("date") is not None:
+            row["date"] = str(row["date"])[:10]  # YYYY-MM-DD
 
     logger.info(f"Total rows: {len(all_rows)}")
 
@@ -257,7 +284,7 @@ def main():
     for category in sorted(rows_by_category.keys()):
         count = len(rows_by_category[category])
         channels = set(r.get("channel") for r in rows_by_category[category])
-        logger.info(f"  {category}: {count:,} rows ({', '.join(sorted(channels))})")
+        logger.info(f"  {category}: {count:,} rows ({', '.join(sorted(filter(None, channels)))})")
 
     logger.info(f"\nTotal: {len(all_rows):,} rows")
     logger.info(f"\nOutput directory: {output_dir}")

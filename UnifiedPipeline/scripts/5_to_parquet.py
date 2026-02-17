@@ -1,25 +1,24 @@
 """
-5_to_parquet.py - Convert checkpoint data to Parquet format for PowerBI
+5_to_parquet.py - Convert DuckDB analytics data to Parquet format for PowerBI
 
 Purpose:
-    Converts JSONL checkpoint files directly to Parquet format with:
-    - Streaming processing (low memory usage)
+    Reads daily analytics from DuckDB and exports to Parquet format with:
     - Year partitioning (faster queries)
     - Proper data types (Int64, Float, DateTime)
     - Snappy compression (~70-80% smaller than CSV)
     - Incremental mode: only regenerates current year by default
 
-Runtime: ~2-5 minutes (full), ~30 seconds (incremental)
+Runtime: ~1-3 minutes
 
 Features:
-    - Reads JSONL checkpoints directly (skips CSV generation)
-    - Streaming: processes in batches to handle multi-GB files
+    - Reads directly from DuckDB (output/analytics.duckdb)
     - Partitioned output: year=2024/, year=2025/, year=2026/
     - Incremental: skips historical years if parquet exists (use --force to override)
+    - Supports --account flag for account-specific DuckDB files
 
 Input:
-    - checkpoints/daily_historical.jsonl (2024 + 2025 data)
-    - checkpoints/daily_current.jsonl (2026 data)
+    - output/analytics.duckdb (from script 3)
+    - OR output/analytics_{account}.duckdb (with --account flag)
     - config/accounts.json (for category grouping)
 
 Output:
@@ -31,27 +30,27 @@ Output:
 
 Star Schema for PowerBI:
     - Fact table: daily_analytics (metrics per video per day)
-      → Only contains: video_id, date, year, metrics, original_filename
-      → Does NOT contain: video_duration, name, channel, account_id, etc.
+      -> Only contains: video_id, date, year, metrics, original_filename
+      -> Does NOT contain: video_duration, name, channel, account_id, etc.
     - Dimension table: video_metadata (one row per video with duration, name, etc.)
-      → Contains: video_id, video_duration, video_duration_seconds, name, channel, etc.
+      -> Contains: video_id, video_duration, video_duration_seconds, name, channel, etc.
     - Join on: video_id
     - This prevents SUM(video_duration) issues when aggregating
 
 Usage:
-    python 5_to_parquet.py          # Incremental: only current year
-    python 5_to_parquet.py --force  # Full: regenerate everything
+    python 5_to_parquet.py              # Incremental: only current year
+    python 5_to_parquet.py --force      # Full: regenerate everything
+    python 5_to_parquet.py --account Internet  # Use account-specific DB
 
 Requirements:
-    pip install pandas pyarrow
+    pip install pandas pyarrow duckdb
 """
 
 import sys
-import json
 import argparse
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Iterator, Optional, Set
+from typing import Dict, List, Optional, Set
 from collections import defaultdict
 
 # Add scripts directory to path for imports
@@ -61,6 +60,8 @@ from shared import (
     load_config,
     setup_logging,
     get_output_paths,
+    init_analytics_db,
+    get_db_stats,
 )
 
 # =============================================================================
@@ -68,38 +69,6 @@ from shared import (
 # =============================================================================
 
 SCRIPT_NAME = "5_to_parquet"
-
-# Batch size for streaming (number of rows to accumulate before writing)
-BATCH_SIZE = 50000
-
-# Output fields (same as 4_combine_output.py)
-OUTPUT_FIELDS = [
-    # Core identifiers
-    "channel", "account_id", "video_id", "name", "date",
-    # View metrics
-    "video_view", "views_desktop", "views_mobile", "views_tablet", "views_other",
-    # Engagement metrics
-    "video_impression", "play_rate", "engagement_score",
-    "video_engagement_1", "video_engagement_25", "video_engagement_50",
-    "video_engagement_75", "video_engagement_100",
-    "video_percent_viewed", "video_seconds_viewed",
-    # CMS metadata
-    "created_at", "published_at", "original_filename", "created_by",
-    # Custom fields (standard)
-    "video_content_type", "video_length", "video_duration", "video_category",
-    "country", "language", "business_unit",
-    "tags", "reference_id",
-    # Harper additions
-    "dt_last_viewed",
-    "cf_relatedlinkname", "cf_relatedlink", "cf_video_owner_email",
-    "cf_1a_comms_sign_off", "cf_1b_comms_sign_off_approver",
-    "cf_2a_data_classification_disclaimer", "cf_3a_records_management_disclaimer",
-    "cf_4a_archiving_disclaimer_comms_branding", "cf_4b_unique_sharepoint_id",
-    # Meta
-    "report_generated_on",
-    # Derived (added by this script)
-    "year",
-]
 
 # Dimension table fields (video metadata - one row per video)
 DIMENSION_FIELDS = [
@@ -194,103 +163,6 @@ COLUMN_DTYPES = {
 
 
 # =============================================================================
-# STREAMING JSONL READER
-# =============================================================================
-
-def stream_jsonl(file_path: Path, logger) -> Iterator[Dict]:
-    """
-    Stream JSONL file line by line (memory efficient).
-
-    Yields one row dict at a time.
-    """
-    if not file_path.exists():
-        logger.warning(f"File not found: {file_path}")
-        return
-
-    line_count = 0
-    error_count = 0
-
-    with open(file_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-
-            try:
-                row = json.loads(line)
-                line_count += 1
-                yield row
-            except json.JSONDecodeError as e:
-                error_count += 1
-                if error_count <= 5:
-                    logger.warning(f"JSON parse error at line {line_count}: {e}")
-
-    logger.info(f"Streamed {line_count} rows from {file_path.name} ({error_count} errors)")
-
-
-def count_jsonl_lines(file_path: Path) -> int:
-    """Count lines in JSONL file (for progress tracking)."""
-    if not file_path.exists():
-        return 0
-
-    count = 0
-    with open(file_path, 'r', encoding='utf-8') as f:
-        for _ in f:
-            count += 1
-    return count
-
-
-# =============================================================================
-# DATA PROCESSING
-# =============================================================================
-
-def extract_year(date_str: str) -> Optional[int]:
-    """Extract year from date string."""
-    if not date_str or len(date_str) < 4:
-        return None
-    try:
-        return int(date_str[:4])
-    except ValueError:
-        return None
-
-
-def process_row(row: Dict) -> Dict:
-    """
-    Process a single row: add derived fields, ensure all columns exist.
-    """
-    # Add year column
-    date_str = row.get("date", "")
-    row["year"] = extract_year(date_str)
-
-    # Add video_duration_seconds (convert from milliseconds)
-    duration_ms = row.get("video_duration")
-    if duration_ms is not None:
-        try:
-            row["video_duration_seconds"] = float(duration_ms) / 1000.0
-        except (TypeError, ValueError):
-            row["video_duration_seconds"] = None
-    else:
-        row["video_duration_seconds"] = None
-
-    # Ensure all expected fields exist
-    for field in OUTPUT_FIELDS:
-        if field not in row:
-            row[field] = None
-
-    return row
-
-
-def extract_dimension_row(row: Dict) -> Dict:
-    """Extract dimension table fields from a row."""
-    return {field: row.get(field) for field in DIMENSION_FIELDS}
-
-
-def extract_fact_row(row: Dict) -> Dict:
-    """Extract fact table fields from a row."""
-    return {field: row.get(field) for field in FACT_FIELDS}
-
-
-# =============================================================================
 # PARQUET WRITING
 # =============================================================================
 
@@ -318,22 +190,18 @@ def apply_dtypes(df, logger):
 
 
 def write_parquet_partitioned(
-    rows: List[Dict],
+    df,
     output_dir: Path,
     partition_col: str,
     logger
 ) -> None:
     """
-    Write rows to partitioned Parquet dataset.
+    Write DataFrame to partitioned Parquet dataset.
 
     Creates: output_dir/partition_col=value/data.parquet
     """
-    import pandas as pd
     import pyarrow as pa
     import pyarrow.parquet as pq
-
-    df = pd.DataFrame(rows)
-    df = apply_dtypes(df, logger)
 
     # Ensure partition column exists and is not null
     if partition_col not in df.columns:
@@ -365,19 +233,14 @@ def write_parquet_partitioned(
 
 
 def write_parquet_single(
-    rows: List[Dict],
+    df,
     output_path: Path,
     logger
 ) -> None:
-    """Write rows to single Parquet file."""
-    import pandas as pd
-
-    if not rows:
+    """Write DataFrame to single Parquet file."""
+    if df is None or len(df) == 0:
         logger.warning(f"No rows to write for {output_path.name}")
         return
-
-    df = pd.DataFrame(rows)
-    df = apply_dtypes(df, logger)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -390,7 +253,7 @@ def write_parquet_single(
 
     # Report size
     size_mb = output_path.stat().st_size / (1024 * 1024)
-    logger.info(f"Written {len(rows):,} rows to {output_path.name} ({size_mb:.1f} MB)")
+    logger.info(f"Written {len(df):,} rows to {output_path.name} ({size_mb:.1f} MB)")
 
 
 # =============================================================================
@@ -414,8 +277,8 @@ def get_existing_parquet_years(parquet_dir: Path) -> Set[int]:
     return existing_years
 
 
-def process_checkpoints_streaming(
-    checkpoint_files: List[Path],
+def process_duckdb(
+    conn,
     output_dir: Path,
     channel_to_category: Dict[str, str],
     historical_years: Set[int],
@@ -424,10 +287,10 @@ def process_checkpoints_streaming(
     logger
 ) -> Dict[str, int]:
     """
-    Process checkpoint files with streaming and write Parquet outputs.
+    Read data from DuckDB and write Parquet outputs.
 
     Args:
-        checkpoint_files: List of JSONL checkpoint files to process
+        conn: DuckDB connection
         output_dir: Root output directory
         channel_to_category: Mapping of channel name to category
         historical_years: Set of historical years (e.g., {2024, 2025})
@@ -460,121 +323,110 @@ def process_checkpoints_streaming(
         else:
             logger.info("INCREMENTAL MODE: No existing historical files found, processing all")
 
-    # Count total lines for progress
-    total_lines = sum(count_jsonl_lines(f) for f in checkpoint_files)
-    logger.info(f"Total rows in checkpoints: {total_lines:,}")
+    # Load data from DuckDB
+    logger.info("\nLoading data from DuckDB...")
+    df = conn.execute("""
+        SELECT *, EXTRACT(YEAR FROM date) AS year
+        FROM daily_analytics
+        ORDER BY account_id, video_id, date
+    """).fetchdf()
 
-    # Accumulators for batched writing
-    all_rows = []
-    rows_by_year = defaultdict(list)
-    rows_by_category = defaultdict(list)
+    logger.info(f"Loaded {len(df):,} rows from DuckDB")
 
-    # Video metadata accumulator (keyed by video_id, keeps most recent)
-    video_metadata = {}
-
-    processed = 0
-    skipped = 0
-
-    # Stream through all checkpoint files
-    for checkpoint_file in checkpoint_files:
-        logger.info(f"\nProcessing: {checkpoint_file.name}")
-
-        for row in stream_jsonl(checkpoint_file, logger):
-            row = process_row(row)
-
-            year = row.get("year")
-            channel = row.get("channel", "")
-            category = channel_to_category.get(channel, "other")
-            video_id = row.get("video_id")
-
-            # Always update video metadata (regardless of year skipping)
-            # This ensures dimension table has all videos
-            if video_id:
-                video_metadata[video_id] = extract_dimension_row(row)
-
-            # Skip rows from years we don't need to regenerate
-            if year in years_to_skip:
-                skipped += 1
-                continue
-
-            # Extract only fact fields for fact table outputs
-            fact_row = extract_fact_row(row)
-            all_rows.append(fact_row)
-            if year:
-                rows_by_year[year].append(fact_row)
-            rows_by_category[category].append(fact_row)
-
-            processed += 1
-
-            # Progress logging every 100k rows
-            if processed % 100000 == 0:
-                logger.info(f"  Processed {processed:,} rows (skipped {skipped:,} from existing years)")
-
-    logger.info(f"\nTotal rows to write: {processed:,} (skipped {skipped:,} from existing historical)")
-    logger.info(f"Unique videos found: {len(video_metadata):,}")
-
-    if not all_rows and not video_metadata:
-        logger.warning("No data to write")
+    if len(df) == 0:
+        logger.warning("No data in DuckDB")
         return {}
 
+    # Add derived fields
+    logger.info("Adding derived fields...")
+
+    # video_duration_seconds (convert from milliseconds)
+    df["video_duration_seconds"] = pd.to_numeric(df["video_duration"], errors="coerce") / 1000.0
+
+    # Apply data types
+    df = apply_dtypes(df, logger)
+
+    # Build video metadata dimension table (one row per video, keep most recent)
+    logger.info("\nBuilding video metadata dimension table...")
+    dimension_cols = [c for c in DIMENSION_FIELDS if c in df.columns]
+    # Sort by date descending so first occurrence per video_id is the most recent
+    metadata_df = df.sort_values("date", ascending=False).drop_duplicates(
+        subset=["video_id"], keep="first"
+    )[dimension_cols].copy()
+
+    logger.info(f"Unique videos for dimension table: {len(metadata_df):,}")
+
+    # Separate fact table columns
+    fact_cols = [c for c in FACT_FIELDS if c in df.columns]
+
     results = {}
+
+    # Filter out years to skip for fact table processing
+    if years_to_skip:
+        process_df = df[~df["year"].isin(years_to_skip)].copy()
+        skipped_count = len(df) - len(process_df)
+        logger.info(f"Skipped {skipped_count:,} rows from existing historical years")
+    else:
+        process_df = df
+
+    fact_df = process_df[fact_cols].copy()
+
+    logger.info(f"Total fact rows to write: {len(fact_df):,}")
 
     # 1. Write partitioned dataset (by year) - only for years we processed
     logger.info("\n--- Writing Partitioned Dataset (by year) ---")
     partitioned_dir = facts_dir / "daily_analytics"
-    write_parquet_partitioned(all_rows, partitioned_dir, "year", logger)
-    results["facts/daily_analytics (partitioned)"] = len(all_rows)
+    write_parquet_partitioned(fact_df, partitioned_dir, "year", logger)
+    results["facts/daily_analytics (partitioned)"] = len(fact_df)
 
     # 2. Write per-year files (only for years we processed)
     logger.info("\n--- Writing Per-Year Files ---")
-    for year in sorted(rows_by_year.keys()):
-        year_rows = rows_by_year[year]
-        year_path = facts_dir / f"daily_analytics_{year}.parquet"
-        write_parquet_single(year_rows, year_path, logger)
-        results[f"facts/daily_analytics_{year}.parquet"] = len(year_rows)
+    for year, year_df in fact_df.groupby("year"):
+        year_path = facts_dir / f"daily_analytics_{int(year)}.parquet"
+        write_parquet_single(year_df, year_path, logger)
+        results[f"facts/daily_analytics_{int(year)}.parquet"] = len(year_df)
 
     # 3. Write per-category files (only include processed data)
     logger.info("\n--- Writing Per-Category Files ---")
-    for category in sorted(rows_by_category.keys()):
-        cat_rows = rows_by_category[category]
+    process_df["category"] = process_df["channel"].map(
+        lambda ch: channel_to_category.get(ch, "other")
+    )
+    for category, cat_df in process_df[fact_cols + ["category"]].groupby("category"):
+        cat_fact_df = cat_df[fact_cols].copy()
         cat_path = facts_dir / f"daily_analytics_{category}.parquet"
-        write_parquet_single(cat_rows, cat_path, logger)
-        results[f"facts/daily_analytics_{category}.parquet"] = len(cat_rows)
+        write_parquet_single(cat_fact_df, cat_path, logger)
+        results[f"facts/daily_analytics_{category}.parquet"] = len(cat_fact_df)
 
     # 4. Write combined file - needs special handling for incremental mode
     logger.info("\n--- Writing Combined File ---")
     if years_to_skip:
-        # In incremental mode, we need to merge with existing data
+        # In incremental mode, merge with existing historical parquet files
         logger.info("Merging new data with existing historical parquet files...")
-        combined_rows = list(all_rows)  # Start with newly processed rows
+        combined_parts = [fact_df]
 
-        # Load existing parquet files for skipped years
         for year in sorted(years_to_skip):
-            existing_path = facts_dir / f"daily_analytics_{year}.parquet"
+            existing_path = facts_dir / f"daily_analytics_{int(year)}.parquet"
             if existing_path.exists():
                 existing_df = pd.read_parquet(existing_path)
-                existing_records = existing_df.to_dict('records')
-                combined_rows.extend(existing_records)
-                logger.info(f"  Loaded {len(existing_records):,} rows from existing {year} file")
+                combined_parts.append(existing_df)
+                logger.info(f"  Loaded {len(existing_df):,} rows from existing {year} file")
 
+        combined_df = pd.concat(combined_parts, ignore_index=True)
         combined_path = facts_dir / "daily_analytics_all.parquet"
-        write_parquet_single(combined_rows, combined_path, logger)
-        results["facts/daily_analytics_all.parquet"] = len(combined_rows)
+        write_parquet_single(combined_df, combined_path, logger)
+        results["facts/daily_analytics_all.parquet"] = len(combined_df)
     else:
-        # Full mode - just write all processed rows
         combined_path = facts_dir / "daily_analytics_all.parquet"
-        write_parquet_single(all_rows, combined_path, logger)
-        results["facts/daily_analytics_all.parquet"] = len(all_rows)
+        write_parquet_single(fact_df, combined_path, logger)
+        results["facts/daily_analytics_all.parquet"] = len(fact_df)
 
     # 5. Write video metadata dimension table (always regenerated)
     logger.info("\n--- Writing Video Metadata Dimension Table ---")
-    if video_metadata:
-        metadata_rows = list(video_metadata.values())
-        metadata_path = dimensions_dir / "video_metadata.parquet"
-        write_parquet_single(metadata_rows, metadata_path, logger)
-        results["dimensions/video_metadata.parquet"] = len(metadata_rows)
-        logger.info(f"  → Use this table for video_duration (one row per video)")
-        logger.info(f"  → Join with daily_analytics on video_id")
+    metadata_path = dimensions_dir / "video_metadata.parquet"
+    write_parquet_single(metadata_df, metadata_path, logger)
+    results["dimensions/video_metadata.parquet"] = len(metadata_df)
+    logger.info(f"  -> Use this table for video_duration (one row per video)")
+    logger.info(f"  -> Join with daily_analytics on video_id")
 
     return results
 
@@ -586,12 +438,17 @@ def process_checkpoints_streaming(
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert checkpoint data to Parquet format for PowerBI"
+        description="Convert DuckDB analytics data to Parquet format for PowerBI"
     )
     parser.add_argument(
         "--force",
         action="store_true",
         help="Force regeneration of all parquet files (including historical)"
+    )
+    parser.add_argument(
+        "--account",
+        type=str,
+        help="Use account-specific DuckDB file (analytics_{account}.duckdb)"
     )
     return parser.parse_args()
 
@@ -605,16 +462,17 @@ def main():
         import pandas as pd
         import pyarrow as pa
         import pyarrow.parquet as pq
+        import duckdb
     except ImportError as e:
         print(f"Missing dependency: {e}")
-        print("Install with: pip install pandas pyarrow")
+        print("Install with: pip install pandas pyarrow duckdb")
         sys.exit(1)
 
     # Setup
     paths = get_output_paths()
     logger = setup_logging(paths['logs'], SCRIPT_NAME)
     logger.info("=" * 60)
-    logger.info("Starting Parquet conversion")
+    logger.info("Starting Parquet conversion (DuckDB source)")
     logger.info("=" * 60)
 
     # Load configuration
@@ -636,38 +494,38 @@ def main():
         for account in category_config.get('accounts', []):
             channel_to_category[account] = category_name
 
-    # Find checkpoint files (including account-specific files for parallel processing)
-    checkpoint_files = []
-
-    # Find all historical checkpoint files (main + account-specific)
-    # Patterns: daily_historical.jsonl, daily_historical_Internet.jsonl, etc.
-    historical_files = sorted(paths['checkpoints'].glob("daily_historical*.jsonl"))
-
-    if historical_files:
-        for hist_file in historical_files:
-            checkpoint_files.append(hist_file)
-            size_mb = hist_file.stat().st_size / (1024 * 1024)
-            logger.info(f"Found historical checkpoint: {hist_file.name} ({size_mb:.1f} MB)")
+    # Determine DuckDB path
+    if args.account:
+        db_path = paths['output'] / f"analytics_{args.account}.duckdb"
     else:
-        logger.warning("No historical checkpoint found")
+        db_path = paths['output'] / "analytics.duckdb"
 
-    # Find current checkpoint
-    current_path = paths['checkpoints'] / "daily_current.jsonl"
+    logger.info(f"DuckDB source: {db_path}")
 
-    if current_path.exists():
-        checkpoint_files.append(current_path)
-        size_mb = current_path.stat().st_size / (1024 * 1024)
-        logger.info(f"Found current checkpoint: {current_path.name} ({size_mb:.1f} MB)")
-    else:
-        logger.warning("No current checkpoint found")
+    if not db_path.exists():
+        logger.error(f"DuckDB file not found: {db_path}")
+        logger.error("Run script 3 (3_daily_analytics.py) first to populate the database.")
+        return
 
-    if not checkpoint_files:
-        logger.error("No checkpoint files found. Run scripts 1-3 first.")
+    # Open DuckDB connection (read-only)
+    conn = init_analytics_db(db_path)
+
+    # Show DB stats
+    stats = get_db_stats(conn)
+    logger.info(f"DuckDB stats:")
+    logger.info(f"  Total rows: {stats['total_rows']:,}")
+    logger.info(f"  Unique videos: {stats['unique_videos']:,}")
+    if stats['date_range'][0]:
+        logger.info(f"  Date range: {stats['date_range'][0]} to {stats['date_range'][1]}")
+
+    if stats['total_rows'] == 0:
+        logger.error("DuckDB is empty. Run script 3 first.")
+        conn.close()
         return
 
     # Process and write
-    results = process_checkpoints_streaming(
-        checkpoint_files=checkpoint_files,
+    results = process_duckdb(
+        conn=conn,
         output_dir=paths['output'],
         channel_to_category=channel_to_category,
         historical_years=historical_years,
@@ -675,6 +533,8 @@ def main():
         force=args.force,
         logger=logger
     )
+
+    conn.close()
 
     # Summary
     logger.info("\n" + "=" * 60)
@@ -700,11 +560,11 @@ def main():
         logger.info("")
         logger.info("RECOMMENDED: Star Schema (prevents SUM aggregation issues)")
         logger.info("  1. Import from Folder: dimensions/")
-        logger.info("     → Contains: video_metadata.parquet (one row per video)")
-        logger.info("     → Fields: video_duration_seconds, name, channel, account_id, etc.")
+        logger.info("     -> Contains: video_metadata.parquet (one row per video)")
+        logger.info("     -> Fields: video_duration_seconds, name, channel, account_id, etc.")
         logger.info("  2. Import from Folder: facts/")
-        logger.info("     → Contains: daily_analytics files (metrics per video per day)")
-        logger.info("     → Fields: video_id, date, video_view, engagement metrics, etc.")
+        logger.info("     -> Contains: daily_analytics files (metrics per video per day)")
+        logger.info("     -> Fields: video_id, date, video_view, engagement metrics, etc.")
         logger.info("  3. Create relationship: video_id (many-to-one)")
         logger.info("  4. Use fields from Dimension Table for name, duration, channel, etc.")
         logger.info("")
