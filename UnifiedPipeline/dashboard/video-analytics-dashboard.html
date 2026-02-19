@@ -956,14 +956,33 @@
             return s.length > maxLen ? s.substring(0, maxLen) + '...' : s;
         }
 
+        function coerce(v) {
+            if (v == null) return null;
+            if (typeof v === 'bigint') return Number(v);
+            if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return v;
+            // Arrow objects (Date, Decimal, Int64 struct, etc.)
+            // Try valueOf() first — Arrow types often expose the primitive this way
+            if (typeof v.valueOf === 'function') {
+                const prim = v.valueOf();
+                if (typeof prim === 'bigint') return Number(prim);
+                if (typeof prim !== 'object') return prim;
+            }
+            // Last resort: toString() for Decimal and other numeric Arrow wrappers
+            const s = String(v);
+            const n = Number(s);
+            return isNaN(n) ? s : n;
+        }
+
         async function query(sql) {
             const result = await conn.query(sql);
-            // Use JSON round-trip to convert all Arrow/BigInt types to plain JS
-            return JSON.parse(
-                JSON.stringify(result.toArray(), (_, v) =>
-                    typeof v === 'bigint' ? Number(v) : v
-                )
-            );
+            const cols = result.schema.fields.map(f => f.name);
+            return result.toArray().map(row => {
+                const obj = {};
+                for (const key of cols) {
+                    obj[key] = coerce(row[key]);
+                }
+                return obj;
+            });
         }
 
         // ====================================================================
