@@ -198,7 +198,7 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 60vh;
+            min-height: 40vh;
             gap: 1rem;
         }
 
@@ -492,6 +492,119 @@
             border-color: var(--primary);
         }
 
+        /* Multi-select dropdown */
+        .multi-select {
+            position: relative;
+            min-width: 180px;
+        }
+
+        .multi-select-toggle {
+            padding: 0.35rem 0.5rem;
+            border: 1px solid var(--light-gray);
+            border-radius: 4px;
+            font-size: 0.8rem;
+            background: var(--white);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+            user-select: none;
+        }
+
+        .multi-select-toggle:hover { border-color: var(--medium-gray); }
+        .multi-select-toggle.open { border-color: var(--primary); }
+
+        .multi-select-toggle .arrow {
+            font-size: 0.6rem;
+            color: var(--medium-gray);
+        }
+
+        .multi-select-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--white);
+            border: 1px solid var(--light-gray);
+            border-radius: 4px;
+            margin-top: 2px;
+            max-height: 240px;
+            overflow-y: auto;
+            z-index: 200;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .multi-select-dropdown.open { display: block; }
+
+        .multi-select-option {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            color: var(--dark-gray);
+        }
+
+        .multi-select-option:hover { background: var(--lighter-gray); }
+
+        .multi-select-option input[type="checkbox"] {
+            accent-color: var(--primary);
+        }
+
+        /* Autocomplete */
+        .autocomplete-wrapper {
+            position: relative;
+        }
+
+        .autocomplete-list {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            min-width: 350px;
+            background: var(--white);
+            border: 1px solid var(--light-gray);
+            border-radius: 4px;
+            margin-top: 2px;
+            max-height: 260px;
+            overflow-y: auto;
+            z-index: 200;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .autocomplete-list.open { display: block; }
+
+        .autocomplete-item {
+            padding: 0.45rem 0.6rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            color: var(--dark-gray);
+            border-bottom: 1px solid var(--lighter-gray);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .autocomplete-item:last-child { border-bottom: none; }
+        .autocomplete-item:hover,
+        .autocomplete-item.active { background: var(--lighter-gray); }
+
+        .autocomplete-item .channel-hint {
+            font-size: 0.7rem;
+            color: var(--medium-gray);
+            margin-left: 0.4rem;
+        }
+
+        .autocomplete-item mark {
+            background: transparent;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
         .active-filters {
             display: flex;
             gap: 0.4rem;
@@ -560,6 +673,39 @@
     </header>
 
     <div class="container">
+        <div class="nav-tabs">
+            <button class="nav-tab active" data-nav="overview">Overview</button>
+            <button class="nav-tab" data-nav="content">Content</button>
+            <button class="nav-tab" data-nav="channels">Channels</button>
+            <button class="nav-tab" data-nav="devices">Devices</button>
+            <button class="nav-tab" data-nav="regional">Regional</button>
+            <button class="nav-tab" data-nav="lifecycle">Lifecycle</button>
+            <button class="nav-tab" data-nav="videotable">Video Table</button>
+            <button class="nav-tab" data-nav="explore">Explore</button>
+        </div>
+
+        <!-- Global Filters -->
+        <div class="filter-bar" id="filterBar">
+            <div class="filter-group">
+                <label>Channel:</label>
+                <div class="multi-select" id="channelMultiSelect">
+                    <div class="multi-select-toggle" onclick="toggleChannelDropdown()">
+                        <span id="channelToggleLabel">All Channels</span>
+                        <span class="arrow">&#9662;</span>
+                    </div>
+                    <div class="multi-select-dropdown" id="channelDropdown"></div>
+                </div>
+            </div>
+            <div class="filter-group">
+                <label>Video:</label>
+                <div class="autocomplete-wrapper">
+                    <input type="text" class="search-input" id="videoSearch" placeholder="Search by name..." oninput="onVideoSearchInput()" onkeydown="onVideoSearchKeydown(event)" autocomplete="off">
+                    <div class="autocomplete-list" id="videoAutocomplete"></div>
+                </div>
+            </div>
+            <div id="activeFilters" class="active-filters"></div>
+        </div>
+
         <!-- Loading State -->
         <div id="loadingState" class="loading">
             <div class="spinner"></div>
@@ -568,31 +714,6 @@
 
         <!-- Dashboard Content -->
         <div id="dashboardContent" style="display: none;">
-            <div class="nav-tabs">
-                <button class="nav-tab active" data-nav="overview">Overview</button>
-                <button class="nav-tab" data-nav="content">Content</button>
-                <button class="nav-tab" data-nav="channels">Channels</button>
-                <button class="nav-tab" data-nav="devices">Devices</button>
-                <button class="nav-tab" data-nav="regional">Regional</button>
-                <button class="nav-tab" data-nav="lifecycle">Lifecycle</button>
-                <button class="nav-tab" data-nav="videotable">Video Table</button>
-                <button class="nav-tab" data-nav="explore">Explore</button>
-            </div>
-
-            <!-- Global Filters -->
-            <div class="filter-bar" id="filterBar">
-                <div class="filter-group">
-                    <label>Channel:</label>
-                    <select id="channelFilter" onchange="applyFilters()">
-                        <option value="">All Channels</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Video:</label>
-                    <input type="text" class="search-input" id="videoSearch" placeholder="Search by name..." oninput="debounceApplyFilters()">
-                </div>
-                <div id="activeFilters" class="active-filters"></div>
-            </div>
 
             <!-- Overview Tab -->
             <div class="nav-content active" id="nav-overview">
@@ -750,7 +871,7 @@
         // ====================================================================
         let db, conn;
         let dateFilter = { from: null, to: null };
-        let channelFilterValue = '';
+        let channelFilterValue = [];
         let videoSearchValue = '';
         let debounceTimer = null;
         let charts = {};
@@ -811,8 +932,9 @@
             if (dateFilter.from && dateFilter.to) {
                 parts.push(`${col} >= '${dateFilter.from}' AND ${col} <= '${dateFilter.to}'`);
             }
-            if (channelFilterValue) {
-                parts.push(`channel = '${channelFilterValue.replace(/'/g, "''")}'`);
+            if (channelFilterValue.length > 0) {
+                const list = channelFilterValue.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
+                parts.push(`channel IN (${list})`);
             }
             if (videoSearchValue.length >= 2) {
                 parts.push(`name ILIKE '%${videoSearchValue.replace(/'/g, "''")}%'`);
@@ -827,9 +949,10 @@
 
         async function query(sql) {
             const result = await conn.query(sql);
+            const cols = result.schema.fields.map(f => f.name);
             return result.toArray().map(row => {
                 const obj = {};
-                for (const key of Object.keys(row)) {
+                for (const key of cols) {
                     let v = row[key];
                     if (typeof v === 'bigint') v = Number(v);
                     obj[key] = v;
@@ -839,14 +962,65 @@
         }
 
         // ====================================================================
-        // TAB NAVIGATION
+        // TAB NAVIGATION (lazy rendering)
         // ====================================================================
+        function safeRender(fn) {
+            return fn().catch(err => console.error(`Render error in ${fn.name || 'anonymous'}:`, err));
+        }
+
+        const tabRenderers = {
+            overview: () => Promise.all([
+                safeRender(renderExecutiveSummary), safeRender(renderKPIs),
+                safeRender(renderMonthlyViews), safeRender(renderMonthlyEngagement),
+                safeRender(renderFunnel), safeRender(renderChannelViews)
+            ]),
+            content: () => Promise.all([
+                safeRender(renderContentTrends), safeRender(renderTopVideosByWatchHours),
+                safeRender(renderDurationCompletion), safeRender(renderDurationViews),
+                safeRender(renderTopVideosByViews), safeRender(renderTopVideosByEngagement),
+                safeRender(renderLowPlayRate)
+            ]),
+            channels: () => Promise.all([
+                safeRender(renderChannelTable), safeRender(renderChannelEfficiency),
+                safeRender(renderChannelEngagement), safeRender(renderChannelFunnel)
+            ]),
+            devices: () => Promise.all([
+                safeRender(renderDevicePie), safeRender(renderDeviceBar), safeRender(renderDeviceTrend)
+            ]),
+            regional: () => Promise.all([
+                safeRender(renderCountryViews), safeRender(renderCountryEngagement),
+                safeRender(renderCountryBubble), safeRender(renderCountryTable),
+                safeRender(renderCountryTopVideos)
+            ]),
+            lifecycle: () => Promise.all([
+                safeRender(renderStaleContent), safeRender(renderRecentPerformers)
+            ]),
+            videotable: () => safeRender(renderVideoTable),
+            explore: () => safeRender(renderExploreTable)
+        };
+
+        let renderedTabs = new Set();
+        let activeTab = 'overview';
+
+        async function renderTab(name) {
+            if (tabRenderers[name]) {
+                await tabRenderers[name]();
+                renderedTabs.add(name);
+            }
+        }
+
+        let dbReady = false;
+
         document.querySelectorAll('.nav-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
+            tab.addEventListener('click', async () => {
                 document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
                 document.querySelectorAll('.nav-content').forEach(c => c.classList.remove('active'));
                 tab.classList.add('active');
-                document.getElementById('nav-' + tab.dataset.nav).classList.add('active');
+                activeTab = tab.dataset.nav;
+                document.getElementById('nav-' + activeTab).classList.add('active');
+                if (dbReady && !renderedTabs.has(activeTab)) {
+                    await renderTab(activeTab);
+                }
             });
         });
 
@@ -888,6 +1062,7 @@
                 document.getElementById('loadingState').style.display = 'none';
                 document.getElementById('dashboardContent').style.display = 'block';
 
+                dbReady = true;
                 await renderDashboard();
 
                 updateStatus('success', `Loaded: ${new Date().toLocaleTimeString()}`);
@@ -1032,17 +1207,17 @@
 
         async function resetDateFilter() {
             await setInitialDateRange();
-            channelFilterValue = '';
+            channelFilterValue = [];
             videoSearchValue = '';
-            document.getElementById('channelFilter').value = '';
             document.getElementById('videoSearch').value = '';
+            updateChannelToggleLabel();
+            uncheckAllChannels();
             clearPresetActive();
             updateActiveFilters();
             await renderDashboard();
         }
 
         async function applyFilters() {
-            channelFilterValue = document.getElementById('channelFilter').value;
             videoSearchValue = document.getElementById('videoSearch').value.trim();
             updateActiveFilters();
             await renderDashboard();
@@ -1053,11 +1228,144 @@
             debounceTimer = setTimeout(() => applyFilters(), 400);
         }
 
+        // Video search autocomplete
+        let acTimer = null;
+        let acIndex = -1;
+
+        function onVideoSearchInput() {
+            clearTimeout(acTimer);
+            const val = document.getElementById('videoSearch').value.trim();
+            if (val.length < 2) {
+                closeAutocomplete();
+                debounceApplyFilters();
+                return;
+            }
+            acTimer = setTimeout(async () => {
+                const results = await query(`
+                    SELECT DISTINCT name, channel
+                    FROM dims
+                    WHERE name ILIKE '%${val.replace(/'/g, "''")}%'
+                    ORDER BY name
+                    LIMIT 15
+                `);
+                showAutocomplete(results, val);
+                debounceApplyFilters();
+            }, 200);
+        }
+
+        function showAutocomplete(results, term) {
+            const list = document.getElementById('videoAutocomplete');
+            if (!results || results.length === 0) {
+                closeAutocomplete();
+                return;
+            }
+            const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+            list.innerHTML = results.map((r, i) => {
+                const highlighted = r.name.replace(regex, '<mark>$1</mark>');
+                return `<div class="autocomplete-item" data-index="${i}" onmousedown="selectAutocomplete('${r.name.replace(/'/g, "\\'")}')">${highlighted}<span class="channel-hint">${r.channel}</span></div>`;
+            }).join('');
+            acIndex = -1;
+            list.classList.add('open');
+        }
+
+        function closeAutocomplete() {
+            document.getElementById('videoAutocomplete').classList.remove('open');
+            acIndex = -1;
+        }
+
+        function selectAutocomplete(name) {
+            document.getElementById('videoSearch').value = name;
+            closeAutocomplete();
+            applyFilters();
+        }
+
+        function onVideoSearchKeydown(e) {
+            const list = document.getElementById('videoAutocomplete');
+            const items = list.querySelectorAll('.autocomplete-item');
+            if (!list.classList.contains('open') || items.length === 0) {
+                if (e.key === 'Enter') { e.preventDefault(); applyFilters(); }
+                return;
+            }
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                acIndex = Math.min(acIndex + 1, items.length - 1);
+                updateAcHighlight(items);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                acIndex = Math.max(acIndex - 1, 0);
+                updateAcHighlight(items);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (acIndex >= 0 && acIndex < items.length) {
+                    items[acIndex].onmousedown();
+                } else {
+                    closeAutocomplete();
+                    applyFilters();
+                }
+            } else if (e.key === 'Escape') {
+                closeAutocomplete();
+            }
+        }
+
+        function updateAcHighlight(items) {
+            items.forEach((it, i) => it.classList.toggle('active', i === acIndex));
+            if (acIndex >= 0) items[acIndex].scrollIntoView({ block: 'nearest' });
+        }
+
+        // Close autocomplete when clicking outside
+        document.addEventListener('click', (e) => {
+            const wrapper = document.querySelector('.autocomplete-wrapper');
+            if (wrapper && !wrapper.contains(e.target)) closeAutocomplete();
+        });
+
+        // Channel multi-select
+        function toggleChannelDropdown() {
+            const dd = document.getElementById('channelDropdown');
+            const toggle = dd.previousElementSibling;
+            const isOpen = dd.classList.toggle('open');
+            toggle.classList.toggle('open', isOpen);
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            const ms = document.getElementById('channelMultiSelect');
+            if (ms && !ms.contains(e.target)) {
+                document.getElementById('channelDropdown').classList.remove('open');
+                document.querySelector('.multi-select-toggle').classList.remove('open');
+            }
+        });
+
+        function onChannelCheckboxChange() {
+            const checked = document.querySelectorAll('#channelDropdown input[type="checkbox"]:checked');
+            channelFilterValue = Array.from(checked).map(cb => cb.value);
+            updateChannelToggleLabel();
+            updateActiveFilters();
+            renderDashboard();
+        }
+
+        function updateChannelToggleLabel() {
+            const label = document.getElementById('channelToggleLabel');
+            if (channelFilterValue.length === 0) {
+                label.textContent = 'All Channels';
+            } else if (channelFilterValue.length === 1) {
+                label.textContent = channelFilterValue[0];
+            } else {
+                label.textContent = `${channelFilterValue.length} channels`;
+            }
+        }
+
+        function uncheckAllChannels() {
+            document.querySelectorAll('#channelDropdown input[type="checkbox"]').forEach(cb => cb.checked = false);
+        }
+
         function updateActiveFilters() {
             const el = document.getElementById('activeFilters');
             const tags = [];
-            if (channelFilterValue) {
-                tags.push(`<span class="filter-tag">${channelFilterValue} <span class="remove" onclick="clearFilter('channel')">x</span></span>`);
+            if (channelFilterValue.length > 0) {
+                channelFilterValue.forEach(ch => {
+                    tags.push(`<span class="filter-tag">${ch} <span class="remove" onclick="removeChannelFilter('${ch.replace(/'/g, "\\'")}')">x</span></span>`);
+                });
             }
             if (videoSearchValue.length >= 2) {
                 tags.push(`<span class="filter-tag">"${videoSearchValue}" <span class="remove" onclick="clearFilter('video')">x</span></span>`);
@@ -1065,10 +1373,20 @@
             el.innerHTML = tags.join('');
         }
 
+        async function removeChannelFilter(ch) {
+            channelFilterValue = channelFilterValue.filter(c => c !== ch);
+            const cb = document.querySelector(`#channelDropdown input[value="${CSS.escape(ch)}"]`);
+            if (cb) cb.checked = false;
+            updateChannelToggleLabel();
+            updateActiveFilters();
+            await renderDashboard();
+        }
+
         async function clearFilter(type) {
             if (type === 'channel') {
-                channelFilterValue = '';
-                document.getElementById('channelFilter').value = '';
+                channelFilterValue = [];
+                uncheckAllChannels();
+                updateChannelToggleLabel();
             } else if (type === 'video') {
                 videoSearchValue = '';
                 document.getElementById('videoSearch').value = '';
@@ -1083,36 +1401,11 @@
         async function renderDashboard() {
             updateStatus('loading', 'Refreshing...');
             try {
+                // Invalidate all tabs so they re-render on next visit
+                renderedTabs.clear();
+                // Render only the active tab + channel filter
                 await Promise.all([
-                    renderExecutiveSummary(),
-                    renderKPIs(),
-                    renderMonthlyViews(),
-                    renderMonthlyEngagement(),
-                    renderFunnel(),
-                    renderChannelViews(),
-                    renderContentTrends(),
-                    renderTopVideosByWatchHours(),
-                    renderDurationCompletion(),
-                    renderDurationViews(),
-                    renderTopVideosByViews(),
-                    renderTopVideosByEngagement(),
-                    renderLowPlayRate(),
-                    renderChannelTable(),
-                    renderChannelEfficiency(),
-                    renderChannelEngagement(),
-                    renderChannelFunnel(),
-                    renderDevicePie(),
-                    renderDeviceBar(),
-                    renderDeviceTrend(),
-                    renderCountryViews(),
-                    renderCountryEngagement(),
-                    renderCountryBubble(),
-                    renderCountryTable(),
-                    renderCountryTopVideos(),
-                    renderStaleContent(),
-                    renderRecentPerformers(),
-                    renderExploreTable(),
-                    renderVideoTable(),
+                    renderTab(activeTab),
                     populateChannelFilter()
                 ]);
                 updateStatus('success', `Updated: ${new Date().toLocaleTimeString()}`);
@@ -2257,7 +2550,7 @@
         // STALE CONTENT
         // ====================================================================
         async function renderStaleContent() {
-            const channelWhere = channelFilterValue ? `AND d.channel = '${channelFilterValue.replace(/'/g, "''")}'` : '';
+            const channelWhere = channelFilterValue.length > 0 ? `AND d.channel IN (${channelFilterValue.map(c => `'${c.replace(/'/g, "''")}'`).join(',')})` : '';
             const videoWhere = videoSearchValue.length >= 2 ? `AND d.name ILIKE '%${videoSearchValue.replace(/'/g, "''")}%'` : '';
             const data = await query(`
                 SELECT
@@ -2297,7 +2590,7 @@
         // RECENT PERFORMERS
         // ====================================================================
         async function renderRecentPerformers() {
-            const channelWhere = channelFilterValue ? `AND channel = '${channelFilterValue.replace(/'/g, "''")}'` : '';
+            const channelWhere = channelFilterValue.length > 0 ? `AND channel IN (${channelFilterValue.map(c => `'${c.replace(/'/g, "''")}'`).join(',')})` : '';
             const videoWhere = videoSearchValue.length >= 2 ? `AND name ILIKE '%${videoSearchValue.replace(/'/g, "''")}%'` : '';
             const data = await query(`
                 SELECT
@@ -2330,10 +2623,11 @@
         async function populateChannelFilter() {
             const data = await query(`SELECT DISTINCT channel FROM dims WHERE channel IS NOT NULL ORDER BY channel`);
             allChannels = data.map(r => r.channel);
-            const select = document.getElementById('channelFilter');
-            const current = select.value;
-            select.innerHTML = '<option value="">All Channels</option>' +
-                allChannels.map(ch => `<option value="${ch}"${ch === current ? ' selected' : ''}>${ch}</option>`).join('');
+            const dd = document.getElementById('channelDropdown');
+            dd.innerHTML = allChannels.map(ch => {
+                const checked = channelFilterValue.includes(ch) ? ' checked' : '';
+                return `<label class="multi-select-option"><input type="checkbox" value="${ch}"${checked} onchange="onChannelCheckboxChange()">${ch}</label>`;
+            }).join('');
         }
 
         async function renderExploreTable() {
