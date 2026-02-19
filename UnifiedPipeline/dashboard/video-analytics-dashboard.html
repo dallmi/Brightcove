@@ -3,14 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Analytics Dashboard</title>
+    <title>Brightcove Video Analytics Dashboard</title>
 
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <!-- Preconnect to CDN for faster resource loading -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 
-    <!-- SheetJS for XLSX export -->
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Chart.js (defer to avoid blocking first paint) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+    <!-- SheetJS for XLSX export (defer to avoid blocking first paint) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <!-- Chart.js Geo plugin (includes topojson-client) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/chartjs-chart-geo@4.3.2/build/index.umd.min.js"></script>
 
     <!-- DuckDB WASM -->
     <script type="module">
@@ -38,6 +44,7 @@
             --danger-light: #FCEAEB;
             --info: #333333;
             --info-light: #ECECEC;
+            --row-alt: #FAFAFA;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -157,6 +164,11 @@
             border-radius: 8px 8px 0 0;
             border-bottom: 2px solid var(--light-gray);
             overflow-x: auto;
+        }
+
+        .nav-tabs.loading, .filter-bar.loading, .date-filter.loading {
+            opacity: 0.4;
+            pointer-events: none;
         }
 
         .nav-tab {
@@ -307,6 +319,46 @@
         .chart-container.tall { height: 350px; }
         .chart-container.short { height: 180px; }
 
+        /* Map */
+        .map-container {
+            position: relative;
+            height: 480px;
+            width: 100%;
+        }
+        .map-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+            cursor: pointer;
+        }
+        .map-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        .map-breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.85rem;
+        }
+        .map-crumb {
+            color: var(--primary);
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .map-crumb:hover { text-decoration: underline; }
+        .map-crumb.active {
+            color: var(--dark-gray);
+            cursor: default;
+            font-weight: 600;
+        }
+        .map-crumb.active:hover { text-decoration: none; }
+        .map-separator {
+            color: var(--medium-gray);
+            font-size: 0.75rem;
+        }
+
         /* Tables */
         .table-container {
             overflow-x: auto;
@@ -341,6 +393,7 @@
             color: var(--dark-gray);
         }
 
+        tbody tr:nth-child(even) td { background: var(--row-alt); }
         tr:hover td { background: var(--lighter-gray); }
 
         .text-right { text-align: right; }
@@ -661,9 +714,9 @@
 </head>
 <body>
     <header class="header">
-        <h1>Video Analytics Dashboard</h1>
+        <h1>Brightcove Video Analytics Dashboard</h1>
         <div class="header-controls">
-            <div class="date-filter">
+            <div class="date-filter loading" id="dateFilterControls">
                 <div class="date-presets">
                     <button class="date-preset" data-preset="7d" onclick="applyDatePreset('7d')">Last 7 days</button>
                     <button class="date-preset" data-preset="30d" onclick="applyDatePreset('30d')">Last 30 days</button>
@@ -688,7 +741,7 @@
     </header>
 
     <div class="container">
-        <div class="nav-tabs">
+        <div class="nav-tabs loading" id="navTabs">
             <button class="nav-tab active" data-nav="overview">Overview</button>
             <button class="nav-tab" data-nav="content">Content</button>
             <button class="nav-tab" data-nav="channels">Channels</button>
@@ -696,11 +749,10 @@
             <button class="nav-tab" data-nav="regional">Regional</button>
             <button class="nav-tab" data-nav="lifecycle">Lifecycle</button>
             <button class="nav-tab" data-nav="videotable">Video Table</button>
-            <button class="nav-tab" data-nav="explore">Explore</button>
         </div>
 
         <!-- Global Filters -->
-        <div class="filter-bar" id="filterBar">
+        <div class="filter-bar loading" id="filterBar">
             <div class="filter-group">
                 <label>Channel:</label>
                 <div class="multi-select" id="channelMultiSelect">
@@ -829,6 +881,22 @@
 
             <!-- Regional Tab -->
             <div class="nav-content" id="nav-regional">
+                <!-- Interactive Map -->
+                <div id="mapSection">
+                    <div class="map-header">
+                        <div class="map-breadcrumb" id="mapBreadcrumb">
+                            <span class="map-crumb active">World</span>
+                        </div>
+                    </div>
+                    <div class="chart-card full-width">
+                        <div class="chart-title" id="mapTitle">Minutes Viewed by Location</div>
+                        <div class="map-container" id="mapContainer">
+                            <canvas id="chartGeoMap"></canvas>
+                        </div>
+                    </div>
+                    <div id="mapDrillDetail" style="display:none;"></div>
+                </div>
+
                 <h3 class="section-title">Views by Country</h3>
                 <div class="charts-grid">
                     <div class="chart-card">
@@ -876,10 +944,6 @@
                 <div id="videoTablePagination" style="display:flex;gap:0.5rem;align-items:center;justify-content:center;margin-top:0.75rem;"></div>
             </div>
 
-            <!-- Explore Tab -->
-            <div class="nav-content" id="nav-explore">
-                <div id="exploreTable"></div>
-            </div>
         </div>
     </div>
 
@@ -902,11 +966,14 @@
             warning: '#E4A911',
             danger: '#BD000C',
             info: '#333333',
-            gray: '#8C8C8C',
+            // Default chart color: dark gray (use for single-series neutral charts)
+            chart: '#555555',
+            chartLight: '#77777799',
+            // Gray palette for multi-series charts (no semantic meaning)
             palette: [
-                '#BD000C', '#333333', '#6E2B2B', '#8B6914', '#8C8C8C',
-                '#8B3A3A', '#A07D1E', '#B4B4B4', '#A04040', '#6F7A1A',
-                '#E4A911'
+                '#333333', '#666666', '#888888', '#AAAAAA', '#555555',
+                '#777777', '#999999', '#BBBBBB', '#444444', '#7A7A7A',
+                '#9E9E9E'
             ]
         };
 
@@ -1026,11 +1093,17 @@
         }
 
         const tabRenderers = {
-            overview: () => Promise.all([
-                safeRender(renderExecutiveSummary), safeRender(renderKPIs),
-                safeRender(renderMonthlyViews), safeRender(renderMonthlyEngagement),
-                safeRender(renderFunnel), safeRender(renderChannelViews)
-            ]),
+            overview: async () => {
+                // Render above-the-fold content first (KPIs appear instantly)
+                await Promise.all([
+                    safeRender(renderExecutiveSummary), safeRender(renderKPIs)
+                ]);
+                // Then charts below the fold (non-blocking)
+                Promise.all([
+                    safeRender(renderMonthlyViews), safeRender(renderMonthlyEngagement),
+                    safeRender(renderFunnel), safeRender(renderChannelViews)
+                ]);
+            },
             content: () => Promise.all([
                 safeRender(renderContentTrends), safeRender(renderTopVideosByWatchHours),
                 safeRender(renderDurationCompletion), safeRender(renderDurationViews),
@@ -1045,6 +1118,7 @@
                 safeRender(renderDevicePie), safeRender(renderDeviceBar), safeRender(renderDeviceTrend)
             ]),
             regional: () => Promise.all([
+                safeRender(renderGeoMap),
                 safeRender(renderCountryViews), safeRender(renderCountryEngagement),
                 safeRender(renderCountryBubble), safeRender(renderCountryTable),
                 safeRender(renderCountryTopVideos)
@@ -1052,8 +1126,7 @@
             lifecycle: () => Promise.all([
                 safeRender(renderStaleContent), safeRender(renderRecentPerformers)
             ]),
-            videotable: () => safeRender(renderVideoTable),
-            explore: () => safeRender(renderExploreTable)
+            videotable: () => safeRender(renderVideoTable)
         };
 
         let renderedTabs = new Set();
@@ -1067,6 +1140,7 @@
         }
 
         let dbReady = false;
+        let dataRefreshTime = null;
 
         document.querySelectorAll('.nav-tab').forEach(tab => {
             tab.addEventListener('click', async () => {
@@ -1116,13 +1190,33 @@
 
                 await setInitialDateRange();
 
+                // Show dashboard shell immediately
                 document.getElementById('loadingState').style.display = 'none';
                 document.getElementById('dashboardContent').style.display = 'block';
-
+                document.getElementById('navTabs').classList.remove('loading');
+                document.getElementById('filterBar').classList.remove('loading');
+                document.getElementById('dateFilterControls').classList.remove('loading');
                 dbReady = true;
-                await renderDashboard();
 
-                updateStatus('success', `Loaded: ${new Date().toLocaleTimeString()}`);
+                // Render visible content first, run non-critical tasks in background
+                await renderTab(activeTab);
+
+                // Channel filter + refresh time in parallel, non-blocking
+                Promise.all([
+                    populateChannelFilter(),
+                    (async () => {
+                        try {
+                            const refreshResult = await query(`SELECT MAX(report_generated_on) as last_refresh FROM facts`);
+                            if (refreshResult[0]?.last_refresh) {
+                                dataRefreshTime = new Date(refreshResult[0].last_refresh);
+                            }
+                        } catch (e) { /* ignore */ }
+                        const refreshLabel = dataRefreshTime
+                            ? `Data from: ${dataRefreshTime.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })} ${dataRefreshTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+                            : `Loaded: ${new Date().toLocaleTimeString()}`;
+                        updateStatus('success', refreshLabel);
+                    })()
+                ]);
             } catch (error) {
                 console.error('Init error:', error);
                 setLoadingText(`Failed to initialize: ${error.message}`);
@@ -1138,28 +1232,36 @@
                 `${baseUrl}/output/parquet/`
             ];
 
-            async function fetchAndRegister(fileName, relativePath, statusText) {
-                let lastError;
-                for (const basePath of pathsToTry) {
-                    try {
-                        const fullPath = basePath + relativePath;
-                        setLoadingText(`Fetching ${fileName}...`);
-                        const response = await fetch(fullPath);
-                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                        const buffer = await response.arrayBuffer();
-                        await db.registerFileBuffer(fileName, new Uint8Array(buffer));
-                        await conn.query(`CREATE VIEW ${fileName.replace('.parquet', '')} AS SELECT * FROM read_parquet('${fileName}')`);
-                        setLoadingText(statusText);
-                        return;
-                    } catch (e) {
-                        lastError = e;
-                    }
-                }
-                throw new Error(`Could not load ${relativePath}: ${lastError?.message}`);
+            // Discover the correct base path with a lightweight HEAD request
+            let resolvedBase = null;
+            for (const basePath of pathsToTry) {
+                try {
+                    const resp = await fetch(basePath + 'facts/daily_analytics_all.parquet', { method: 'HEAD' });
+                    if (resp.ok) { resolvedBase = basePath; break; }
+                } catch (e) { /* try next */ }
+            }
+            if (!resolvedBase) {
+                // Fallback: try full fetch on first path
+                resolvedBase = pathsToTry[0];
             }
 
-            await fetchAndRegister('facts.parquet', 'facts/daily_analytics_all.parquet', 'Loaded daily analytics...');
-            await fetchAndRegister('dims.parquet', 'dimensions/video_metadata.parquet', 'Loaded video metadata...');
+            async function fetchAndRegister(fileName, relativePath, statusText) {
+                const fullPath = resolvedBase + relativePath;
+                setLoadingText(`Fetching ${fileName}...`);
+                const response = await fetch(fullPath);
+                if (!response.ok) throw new Error(`HTTP ${response.status} for ${relativePath}`);
+                const buffer = await response.arrayBuffer();
+                await db.registerFileBuffer(fileName, new Uint8Array(buffer));
+                await conn.query(`CREATE VIEW ${fileName.replace('.parquet', '')} AS SELECT * FROM read_parquet('${fileName}')`);
+                setLoadingText(statusText);
+            }
+
+            // Download both parquet files in parallel
+            setLoadingText('Loading parquet files...');
+            await Promise.all([
+                fetchAndRegister('facts.parquet', 'facts/daily_analytics_all.parquet', 'Loaded daily analytics...'),
+                fetchAndRegister('dims.parquet', 'dimensions/video_metadata.parquet', 'Loaded video metadata...')
+            ]);
 
             // Create joined view for convenience
             setLoadingText('Creating analytics view...');
@@ -1189,8 +1291,9 @@
             const minDate = new Date(row.min_date);
             const maxDate = new Date(row.max_date);
 
-            document.getElementById('dateFrom').value = minDate.toISOString().split('T')[0];
-            document.getElementById('dateTo').value = maxDate.toISOString().split('T')[0];
+            const fmtDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            document.getElementById('dateFrom').value = fmtDate(minDate);
+            document.getElementById('dateTo').value = fmtDate(maxDate);
 
             dateFilter.from = document.getElementById('dateFrom').value;
             dateFilter.to = document.getElementById('dateTo').value;
@@ -1246,7 +1349,7 @@
                     return;
             }
 
-            const fmt = d => d.toISOString().split('T')[0];
+            const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
             document.getElementById('dateFrom').value = fmt(from);
             document.getElementById('dateTo').value = fmt(to);
             dateFilter.from = fmt(from);
@@ -1491,12 +1594,13 @@
             try {
                 // Invalidate all tabs so they re-render on next visit
                 renderedTabs.clear();
-                // Render only the active tab + channel filter
-                await Promise.all([
-                    renderTab(activeTab),
-                    populateChannelFilter()
-                ]);
-                updateStatus('success', `Updated: ${new Date().toLocaleTimeString()}`);
+                // Render active tab (primary), channel filter in background
+                populateChannelFilter();
+                await renderTab(activeTab);
+                const refreshLabel = dataRefreshTime
+                    ? `Data from: ${dataRefreshTime.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })} ${dataRefreshTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+                    : `Updated: ${new Date().toLocaleTimeString()}`;
+                updateStatus('success', refreshLabel);
             } catch (error) {
                 console.error('Render error:', error);
                 updateStatus('error', 'Error rendering dashboard');
@@ -1661,8 +1765,8 @@
                     labels: data.map(r => r.month.substring(0, 7)),
                     datasets: [{
                         data: data.map(r => r.views),
-                        backgroundColor: COLORS.primary + '99',
-                        borderColor: COLORS.primary,
+                        backgroundColor: COLORS.chartLight,
+                        borderColor: COLORS.chart,
                         borderWidth: 1
                     }]
                 },
@@ -1749,7 +1853,7 @@
             const row = data[0];
             const labels = ['Completed (100%)', 'Reached 75%', 'Reached 50%', 'Reached 25%', 'Started (1%)'];
             const values = [row.completed, row.reached_75, row.reached_50, row.reached_25, row.started];
-            const colors = ['#6F7A1A', '#333333', '#6E2B2B', '#BD000C', '#E4A911'];
+            const colors = ['#333333', '#555555', '#777777', '#999999', '#BBBBBB'];
 
             destroyChart('chartFunnel');
             const ctx = document.getElementById('chartFunnel').getContext('2d');
@@ -1911,8 +2015,8 @@
                     datasets: [{
                         label: 'Views',
                         data: data.map(r => r.views),
-                        backgroundColor: COLORS.primary + '99',
-                        borderColor: COLORS.primary,
+                        backgroundColor: COLORS.chartLight,
+                        borderColor: COLORS.chart,
                         borderWidth: 1
                     }]
                 },
@@ -2278,7 +2382,7 @@
             const row = data[0];
             const labels = [];
             const values = [];
-            const colors = ['#333333', '#BD000C', '#8C8C8C', '#6E2B2B'];
+            const colors = ['#444444', '#777777', '#AAAAAA', '#CCCCCC'];
 
             if (row.desktop > 0) { labels.push('Desktop'); values.push(row.desktop); }
             if (row.mobile > 0) { labels.push('Mobile'); values.push(row.mobile); }
@@ -2348,7 +2452,7 @@
                     labels: entries.map(e => e.label),
                     datasets: [{
                         data: entries.map(e => e.value),
-                        backgroundColor: ['#33333399', '#BD000C99', '#8C8C8C99', '#6E2B2B99'],
+                        backgroundColor: ['#44444499', '#77777799', '#AAAAAA99', '#CCCCCC99'],
                         borderWidth: 0
                     }]
                 },
@@ -2389,14 +2493,14 @@
                         {
                             label: 'Desktop %',
                             data: data.map(r => r.desktop_pct),
-                            borderColor: '#333333',
+                            borderColor: '#444444',
                             tension: 0.3,
                             pointRadius: 3
                         },
                         {
                             label: 'Mobile %',
                             data: data.map(r => r.mobile_pct),
-                            borderColor: '#BD000C',
+                            borderColor: '#999999',
                             tension: 0.3,
                             pointRadius: 3
                         }
@@ -2412,6 +2516,315 @@
                     }
                 }
             });
+        }
+
+        // ====================================================================
+        // REGIONAL: INTERACTIVE MAP
+        // ====================================================================
+        let worldTopology = null;
+        let usTopology = null;
+        let currentMapLevel = 'world';
+        let geoMapChart = null;
+        let geoRegistered = false;
+
+        function ensureGeoRegistered() {
+            if (geoRegistered) return;
+            if (typeof ChartGeo !== 'undefined') {
+                Chart.register(
+                    ChartGeo.ChoroplethController,
+                    ChartGeo.GeoFeature,
+                    ChartGeo.ColorScale,
+                    ChartGeo.ProjectionScale
+                );
+                geoRegistered = true;
+            }
+        }
+
+        // Country name mapping: data values → TopoJSON feature names
+        const COUNTRY_NAME_MAP = {
+            'US': 'United States of America', 'USA': 'United States of America',
+            'United States': 'United States of America',
+            'UK': 'United Kingdom', 'Great Britain': 'United Kingdom', 'England': 'United Kingdom',
+            'Deutschland': 'Germany', 'DE': 'Germany',
+            'Schweiz': 'Switzerland', 'Suisse': 'Switzerland', 'CH': 'Switzerland',
+            'JP': 'Japan', 'FR': 'France', 'CN': 'China', 'IN': 'India',
+            'BR': 'Brazil', 'RU': 'Russia', 'AU': 'Australia', 'CA': 'Canada',
+            'IT': 'Italy', 'ES': 'Spain', 'KR': 'South Korea', 'MX': 'Mexico',
+            'NL': 'Netherlands', 'AT': 'Austria', 'BE': 'Belgium',
+            'SE': 'Sweden', 'NO': 'Norway', 'DK': 'Denmark', 'FI': 'Finland',
+            'PL': 'Poland', 'CZ': 'Czechia', 'Czech Republic': 'Czechia',
+            'SG': 'Singapore', 'HK': 'Hong Kong', 'TW': 'Taiwan',
+            'IE': 'Ireland', 'NZ': 'New Zealand', 'ZA': 'South Africa',
+            'AE': 'United Arab Emirates', 'UAE': 'United Arab Emirates',
+            'LU': 'Luxembourg', 'PT': 'Portugal', 'LI': 'Liechtenstein',
+        };
+
+        function normalizeToFeatureName(name) {
+            return COUNTRY_NAME_MAP[name] || name;
+        }
+
+        // Build reverse map: feature name → possible data country values
+        function getDataCountryNames(featureName) {
+            const names = [featureName];
+            for (const [k, v] of Object.entries(COUNTRY_NAME_MAP)) {
+                if (v === featureName) names.push(k);
+            }
+            return names;
+        }
+
+        async function loadWorldTopology() {
+            if (worldTopology) return worldTopology;
+            const resp = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+            worldTopology = await resp.json();
+            return worldTopology;
+        }
+
+        async function loadUSTopology() {
+            if (usTopology) return usTopology;
+            const resp = await fetch('https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json');
+            usTopology = await resp.json();
+            return usTopology;
+        }
+
+        async function renderGeoMap() {
+            ensureGeoRegistered();
+            currentMapLevel = 'world';
+            updateMapBreadcrumb();
+            await renderWorldMap();
+        }
+
+        async function renderWorldMap() {
+            const topo = await loadWorldTopology();
+            const w = getWhereClause();
+
+            const data = await query(`
+                SELECT
+                    COALESCE(NULLIF(country, ''), 'Unknown') as country,
+                    ROUND(SUM(video_seconds_viewed) / 60.0, 0) as minutes_viewed
+                FROM analytics
+                WHERE ${w} AND video_seconds_viewed > 0
+                GROUP BY 1
+                ORDER BY minutes_viewed DESC
+            `);
+
+            // Build lookup: normalized feature name → minutes
+            const minutesByFeature = {};
+            data.forEach(r => {
+                const featureName = normalizeToFeatureName(r.country);
+                minutesByFeature[featureName] = (minutesByFeature[featureName] || 0) + r.minutes_viewed;
+            });
+
+            const countries = ChartGeo.topojson.feature(topo, topo.objects.countries).features;
+
+            const chartData = countries.map(f => ({
+                feature: f,
+                value: minutesByFeature[f.properties.name] || 0
+            }));
+
+            if (geoMapChart) { geoMapChart.destroy(); geoMapChart = null; }
+
+            const ctx = document.getElementById('chartGeoMap').getContext('2d');
+            geoMapChart = new Chart(ctx, {
+                type: 'choropleth',
+                data: {
+                    labels: countries.map(f => f.properties.name),
+                    datasets: [{
+                        label: 'Minutes Viewed',
+                        outline: countries,
+                        data: chartData,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (item) => {
+                                    const name = item.raw.feature.properties.name;
+                                    const val = item.raw.value;
+                                    return val > 0 ? `${name}: ${fmt(val)} min` : `${name}: no data`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        projection: {
+                            axis: 'x',
+                            projection: 'equalEarth'
+                        },
+                        color: {
+                            axis: 'x',
+                            quantize: 5,
+                            interpolate: (v) => {
+                                // Gray gradient: lighter-gray (#F5F5F5) → dark-gray (#333333)
+                                const c = Math.round(245 + (51 - 245) * v);
+                                return `rgb(${c},${c},${c})`;
+                            },
+                            legend: {
+                                position: 'bottom-right',
+                                align: 'right'
+                            }
+                        }
+                    },
+                    onClick: (event, elements) => {
+                        if (elements.length > 0) {
+                            const idx = elements[0].index;
+                            const feature = chartData[idx].feature;
+                            drillIntoCountry(feature.properties.name);
+                        }
+                    }
+                }
+            });
+
+            document.getElementById('mapTitle').textContent = 'Minutes Viewed by Location';
+            document.getElementById('mapDrillDetail').style.display = 'none';
+        }
+
+        async function drillIntoCountry(countryName) {
+            currentMapLevel = countryName;
+            updateMapBreadcrumb();
+
+            if (countryName === 'United States of America') {
+                await renderUSStatesMap();
+            } else {
+                document.getElementById('mapTitle').textContent = `Minutes Viewed — ${countryName}`;
+            }
+
+            await renderCountryDrillDetail(countryName);
+        }
+
+        async function renderUSStatesMap() {
+            const topo = await loadUSTopology();
+            const states = ChartGeo.topojson.feature(topo, topo.objects.states).features;
+
+            const stateChartData = states.map(f => ({ feature: f, value: 0 }));
+
+            if (geoMapChart) { geoMapChart.destroy(); geoMapChart = null; }
+
+            const ctx = document.getElementById('chartGeoMap').getContext('2d');
+            geoMapChart = new Chart(ctx, {
+                type: 'choropleth',
+                data: {
+                    labels: states.map(f => f.properties.name),
+                    datasets: [{
+                        label: 'Minutes Viewed',
+                        outline: states,
+                        data: stateChartData,
+                        backgroundColor: '#F5F5F5',
+                        borderColor: '#999999',
+                        borderWidth: 0.5,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (item) => `${item.raw.feature.properties.name}: state-level data not yet available`
+                            }
+                        }
+                    },
+                    scales: {
+                        projection: { axis: 'x', projection: 'albersUsa' },
+                        color: { axis: 'x', quantize: 5, legend: { display: false } }
+                    }
+                }
+            });
+
+            document.getElementById('mapTitle').innerHTML =
+                'Minutes Viewed by State <span style="font-size:0.75rem;color:var(--medium-gray);font-weight:normal;">(state-level analytics not yet in pipeline)</span>';
+        }
+
+        async function renderCountryDrillDetail(countryName) {
+            const w = getWhereClause();
+            const nameList = getDataCountryNames(countryName).map(n => `'${n.replace(/'/g, "''")}'`).join(',');
+
+            const [summary, topVideos] = await Promise.all([
+                query(`
+                    SELECT
+                        SUM(video_view) as total_views,
+                        ROUND(SUM(video_seconds_viewed) / 3600.0, 1) as total_hours,
+                        COUNT(DISTINCT video_id) as video_count,
+                        ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion_rate
+                    FROM analytics
+                    WHERE ${w} AND country IN (${nameList})
+                `),
+                query(`
+                    SELECT
+                        MAX(name) as name,
+                        SUM(video_view) as views,
+                        ROUND(SUM(video_seconds_viewed) / 60.0, 0) as minutes_viewed,
+                        ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion_pct
+                    FROM analytics
+                    WHERE ${w} AND country IN (${nameList}) AND video_view > 0
+                    GROUP BY video_id
+                    ORDER BY minutes_viewed DESC
+                    LIMIT 20
+                `)
+            ]);
+
+            const s = summary[0] || {};
+            const detail = document.getElementById('mapDrillDetail');
+            detail.style.display = 'block';
+
+            let html = `
+                <div class="kpi-grid" style="margin: 1rem 0;">
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Views</div>
+                        <div class="kpi-value">${fmt(s.total_views)}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Watch Hours</div>
+                        <div class="kpi-value">${fmt(s.total_hours)}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Videos</div>
+                        <div class="kpi-value">${fmt(s.video_count)}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Completion Rate</div>
+                        <div class="kpi-value">${fmtPct(s.completion_rate)}</div>
+                    </div>
+                </div>
+            `;
+
+            if (topVideos.length > 0) {
+                html += `<h3 class="section-title">Top Videos — ${countryName}</h3>`;
+                html += renderTable(topVideos, [
+                    { key: 'name', label: 'Video', fmt: v => truncateStr(v, 60) },
+                    { key: 'views', label: 'Views', cls: 'text-right', fmt: fmt },
+                    { key: 'minutes_viewed', label: 'Minutes', cls: 'text-right', fmt: fmt },
+                    { key: 'completion_pct', label: 'Completion %', cls: 'text-right', fmt: fmtPct }
+                ]);
+            } else {
+                html += `<p style="color:var(--medium-gray);font-size:0.85rem;padding:1rem;">No video data found for ${countryName}.</p>`;
+            }
+
+            detail.innerHTML = html;
+        }
+
+        function updateMapBreadcrumb() {
+            const bc = document.getElementById('mapBreadcrumb');
+            if (currentMapLevel === 'world') {
+                bc.innerHTML = '<span class="map-crumb active">World</span>';
+            } else {
+                bc.innerHTML = `
+                    <span class="map-crumb" onclick="backToWorldMap()">World</span>
+                    <span class="map-separator">›</span>
+                    <span class="map-crumb active">${currentMapLevel}</span>
+                `;
+            }
+        }
+
+        async function backToWorldMap() {
+            currentMapLevel = 'world';
+            updateMapBreadcrumb();
+            document.getElementById('mapDrillDetail').style.display = 'none';
+            await renderWorldMap();
         }
 
         // ====================================================================
@@ -2736,31 +3149,6 @@
             renderChannelOptions(term);
         }
 
-        async function renderExploreTable() {
-            const w = getWhereClause();
-            const data = await query(`
-                SELECT
-                    channel,
-                    video_id,
-                    MAX(name) as name,
-                    SUM(video_view) as views,
-                    ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion,
-                    ROUND(MAX(video_duration_seconds), 0) as duration_sec
-                FROM analytics
-                WHERE ${w} AND video_view > 0
-                GROUP BY channel, video_id
-                ORDER BY views DESC
-                LIMIT 100
-            `);
-
-            document.getElementById('exploreTable').innerHTML = renderTable(data, [
-                { key: 'channel', label: 'Channel' },
-                { key: 'name', label: 'Video Name', fmt: v => truncateStr(v, 80) },
-                { key: 'views', label: 'Views', cls: 'text-right', fmt: fmt },
-                { key: 'completion', label: 'Completion', cls: 'text-right', fmt: fmtPct },
-                { key: 'duration_sec', label: 'Duration', cls: 'text-right', fmt: fmtDuration }
-            ]);
-        }
 
         // ====================================================================
         // VIDEO TABLE (full ranked table matching Brightcove export style)
