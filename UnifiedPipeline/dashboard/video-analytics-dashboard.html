@@ -774,7 +774,7 @@
             <button class="nav-tab" data-nav="content">Content</button>
             <button class="nav-tab" data-nav="channels">Channels</button>
             <button class="nav-tab" data-nav="devices">Devices</button>
-            <button class="nav-tab" data-nav="regional">Regional</button>
+            <button class="nav-tab" data-nav="regional">Markets</button>
             <button class="nav-tab" data-nav="lifecycle">Lifecycle</button>
             <button class="nav-tab" data-nav="videotable">Video Table</button>
         </div>
@@ -907,7 +907,7 @@
                 </div>
             </div>
 
-            <!-- Regional Tab -->
+            <!-- Markets Tab -->
             <div class="nav-content" id="nav-regional">
                 <!-- Interactive Map -->
                 <div id="mapSection">
@@ -917,7 +917,7 @@
                         </div>
                     </div>
                     <div class="chart-card full-width">
-                        <div class="chart-title" id="mapTitle">Minutes Viewed by Location</div>
+                        <div class="chart-title" id="mapTitle">Minutes Viewed by Content Market</div>
                         <div class="map-container" id="mapContainer">
                             <canvas id="chartGeoMap"></canvas>
                             <div class="map-zoom-controls">
@@ -929,30 +929,30 @@
                     <div id="mapDrillDetail" style="display:none;"></div>
                 </div>
 
-                <h3 class="section-title">Views by Country</h3>
+                <h3 class="section-title">Views by Content Market</h3>
                 <div class="charts-grid">
                     <div class="chart-card">
-                        <div class="chart-title">Top Countries by Views</div>
+                        <div class="chart-title">Top Markets by Views</div>
                         <div class="chart-container tall"><canvas id="chartCountryViews"></canvas></div>
                     </div>
                     <div class="chart-card">
-                        <div class="chart-title">Completion Rate by Country
+                        <div class="chart-title">Completion Rate by Market
                             <span class="chart-subtitle">min. 100 views</span>
                         </div>
                         <div class="chart-container tall"><canvas id="chartCountryEngagement"></canvas></div>
                     </div>
                 </div>
-                <h3 class="section-title">Avg Watch Time vs Viewers by Country</h3>
+                <h3 class="section-title">Avg Watch Time vs Viewers by Market</h3>
                 <p style="font-size:0.75rem; color:var(--medium-gray); margin-bottom:0.5rem;">Bubble size = total watch hours. X = total views, Y = avg seconds viewed per view.</p>
                 <div class="charts-grid">
                     <div class="chart-card full-width">
                         <div class="chart-container tall"><canvas id="chartCountryBubble"></canvas></div>
                     </div>
                 </div>
-                <h3 class="section-title">Country Detail</h3>
+                <h3 class="section-title">Market Detail</h3>
                 <div id="countryTable"></div>
-                <h3 class="section-title">Top Videos by Country</h3>
-                <p style="font-size:0.75rem; color:var(--medium-gray); margin-bottom:0.5rem;">Select a country above or use the table to see top-performing videos per region.</p>
+                <h3 class="section-title">Top Videos by Market</h3>
+                <p style="font-size:0.75rem; color:var(--medium-gray); margin-bottom:0.5rem;">Select a market above or use the table to see top-performing videos per market.</p>
                 <div id="countryTopVideos"></div>
             </div>
 
@@ -2726,7 +2726,7 @@
                 }
             });
 
-            document.getElementById('mapTitle').textContent = 'Minutes Viewed by Location';
+            document.getElementById('mapTitle').textContent = 'Minutes Viewed by Content Market';
             document.getElementById('mapDrillDetail').style.display = 'none';
         }
 
@@ -3083,7 +3083,7 @@
             `);
 
             document.getElementById('countryTable').innerHTML = renderTable(data, [
-                { key: 'country', label: 'Country' },
+                { key: 'country', label: 'Market' },
                 { key: 'num_videos', label: 'Videos', cls: 'text-right', fmt: fmt },
                 { key: 'views', label: 'Total Views', cls: 'text-right', fmt: fmt },
                 { key: 'views_per_video', label: 'Views/Video', cls: 'text-right', fmt: fmt },
@@ -3113,7 +3113,7 @@
             `);
 
             document.getElementById('countryTopVideos').innerHTML = renderTable(data, [
-                { key: 'country', label: 'Country' },
+                { key: 'country', label: 'Market' },
                 { key: 'channel', label: 'Channel' },
                 { key: 'name', label: 'Video Name', fmt: v => truncateStr(v, 60) },
                 { key: 'views', label: 'Views', cls: 'text-right', fmt: fmt },
