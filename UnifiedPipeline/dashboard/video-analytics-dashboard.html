@@ -1375,9 +1375,30 @@
             }
         });
 
+        function onChannelSelectAll() {
+            const selectAll = document.getElementById('channelSelectAll');
+            const boxes = document.querySelectorAll('#channelDropdown input[type="checkbox"][value]');
+            boxes.forEach(cb => cb.checked = selectAll.checked);
+            // All checked = no filter (show everything)
+            channelFilterValue = [];
+            updateChannelToggleLabel();
+            updateActiveFilters();
+            renderDashboard();
+        }
+
         function onChannelCheckboxChange() {
-            const checked = document.querySelectorAll('#channelDropdown input[type="checkbox"]:checked');
-            channelFilterValue = Array.from(checked).map(cb => cb.value);
+            const boxes = document.querySelectorAll('#channelDropdown input[type="checkbox"][value]');
+            const checked = Array.from(boxes).filter(cb => cb.checked);
+            const selectAll = document.getElementById('channelSelectAll');
+
+            if (checked.length === allChannels.length) {
+                // All individually checked = same as "All Channels"
+                selectAll.checked = true;
+                channelFilterValue = [];
+            } else {
+                selectAll.checked = false;
+                channelFilterValue = checked.map(cb => cb.value);
+            }
             updateChannelToggleLabel();
             updateActiveFilters();
             renderDashboard();
@@ -1395,7 +1416,7 @@
         }
 
         function uncheckAllChannels() {
-            document.querySelectorAll('#channelDropdown input[type="checkbox"]').forEach(cb => cb.checked = false);
+            document.querySelectorAll('#channelDropdown input[type="checkbox"]').forEach(cb => cb.checked = true);
         }
 
         function updateActiveFilters() {
@@ -1416,6 +1437,8 @@
             channelFilterValue = channelFilterValue.filter(c => c !== ch);
             const cb = document.querySelector(`#channelDropdown input[value="${CSS.escape(ch)}"]`);
             if (cb) cb.checked = false;
+            const selectAll = document.getElementById('channelSelectAll');
+            if (selectAll) selectAll.checked = channelFilterValue.length === 0;
             updateChannelToggleLabel();
             updateActiveFilters();
             await renderDashboard();
@@ -2663,10 +2686,14 @@
             const data = await query(`SELECT DISTINCT channel FROM dims WHERE channel IS NOT NULL ORDER BY channel`);
             allChannels = data.map(r => r.channel);
             const dd = document.getElementById('channelDropdown');
-            dd.innerHTML = allChannels.map(ch => {
-                const checked = channelFilterValue.includes(ch) ? ' checked' : '';
+            const allChecked = channelFilterValue.length === 0;
+            let html = `<label class="multi-select-option" style="border-bottom:1px solid var(--light-gray);font-weight:600;">` +
+                `<input type="checkbox" id="channelSelectAll"${allChecked ? ' checked' : ''} onchange="onChannelSelectAll()">All Channels</label>`;
+            html += allChannels.map(ch => {
+                const checked = allChecked || channelFilterValue.includes(ch) ? ' checked' : '';
                 return `<label class="multi-select-option"><input type="checkbox" value="${ch}"${checked} onchange="onChannelCheckboxChange()">${ch}</label>`;
             }).join('');
+            dd.innerHTML = html;
         }
 
         async function renderExploreTable() {
