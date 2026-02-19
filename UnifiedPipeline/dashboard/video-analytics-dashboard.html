@@ -564,11 +564,11 @@
                         <div class="chart-container"><canvas id="chartMonthlyViews"></canvas></div>
                     </div>
                     <div class="chart-card">
-                        <div class="chart-title">Monthly Engagement <span class="chart-subtitle">excl. Internet autoplay</span></div>
+                        <div class="chart-title">Monthly Engagement</div>
                         <div class="chart-container"><canvas id="chartMonthlyEngagement"></canvas></div>
                     </div>
                     <div class="chart-card">
-                        <div class="chart-title">Engagement Funnel <span class="chart-subtitle">excl. Internet</span></div>
+                        <div class="chart-title">Engagement Funnel</div>
                         <div class="chart-container tall"><canvas id="chartFunnel"></canvas></div>
                     </div>
                     <div class="chart-card">
@@ -583,7 +583,7 @@
                 <h3 class="section-title">Duration Sweet Spot</h3>
                 <div class="charts-grid">
                     <div class="chart-card">
-                        <div class="chart-title">Completion Rate by Duration <span class="chart-subtitle">excl. Internet</span></div>
+                        <div class="chart-title">Completion Rate by Duration</div>
                         <div class="chart-container"><canvas id="chartDurationCompletion"></canvas></div>
                     </div>
                     <div class="chart-card">
@@ -593,7 +593,7 @@
                 </div>
                 <h3 class="section-title">Top Videos by Views</h3>
                 <div id="topVideosByViews"></div>
-                <h3 class="section-title">Top Videos by Engagement (min. 100 views, excl. Internet)</h3>
+                <h3 class="section-title">Top Videos by Engagement (min. 100 views)</h3>
                 <div id="topVideosByEngagement"></div>
                 <h3 class="section-title">Low Play Rate Videos</h3>
                 <p style="font-size:0.75rem; color:var(--medium-gray); margin-bottom:0.5rem;">High impressions but low play rate -- may need better thumbnails or titles.</p>
@@ -610,11 +610,11 @@
                         <div class="chart-container tall"><canvas id="chartChannelEfficiency"></canvas></div>
                     </div>
                     <div class="chart-card">
-                        <div class="chart-title">Engagement by Channel <span class="chart-subtitle">excl. Internet</span></div>
+                        <div class="chart-title">Engagement by Channel</div>
                         <div class="chart-container tall"><canvas id="chartChannelEngagement"></canvas></div>
                     </div>
                 </div>
-                <h3 class="section-title">Engagement Funnel by Channel (excl. Internet)</h3>
+                <h3 class="section-title">Engagement Funnel by Channel</h3>
                 <div id="channelFunnelTable"></div>
             </div>
 
@@ -726,15 +726,6 @@
                 parts.push(`name ILIKE '%${videoSearchValue.replace(/'/g, "''")}%'`);
             }
             return parts.join(' AND ');
-        }
-
-        // When user explicitly picks a channel, don't auto-exclude Internet
-        function shouldExcludeInternet() {
-            return !channelFilterValue;
-        }
-
-        function internetClause() {
-            return shouldExcludeInternet() ? "${internetClause()}" : '';
         }
 
         function truncateStr(s, maxLen = 60) {
@@ -992,8 +983,7 @@
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as avg_completion,
                     ROUND(SUM(views_mobile) * 100.0 / NULLIF(SUM(video_view), 0), 1) as mobile_pct
                 FROM analytics
-                WHERE ${w} ${internetClause()}
-            `);
+                WHERE ${w}            `);
 
             const row = data[0];
             const eng = engData[0];
@@ -1013,7 +1003,7 @@
                 insights.push({
                     cls,
                     title: 'Completion Rate',
-                    text: `${fmtPct(eng.avg_completion)} of viewers watch videos to the end (excl. Internet autoplay).`
+                    text: `${fmtPct(eng.avg_completion)} of viewers watch videos to the end.`
                 });
             }
 
@@ -1062,8 +1052,7 @@
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion_rate,
                     ROUND(SUM(video_engagement_25) * 100.0 / NULLIF(SUM(video_view), 0), 1) as reached_25
                 FROM analytics
-                WHERE ${w} ${internetClause()}
-            `);
+                WHERE ${w}            `);
 
             const row = data[0];
             const eng = engData[0];
@@ -1092,7 +1081,7 @@
                 <div class="kpi-card ${eng.completion_rate > 50 ? 'success' : 'warning'}">
                     <div class="kpi-label">Completion Rate</div>
                     <div class="kpi-value">${fmtPct(eng.completion_rate)}</div>
-                    <div class="kpi-subtitle">excl. Internet</div>
+                    <div class="kpi-subtitle"></div>
                 </div>
             `;
         }
@@ -1149,8 +1138,7 @@
                     ROUND(SUM(video_engagement_50) * 100.0 / NULLIF(SUM(video_view), 0), 1) as halfway
                 FROM analytics
                 WHERE ${w}
-                  ${internetClause()}
-                  AND DATE_TRUNC('month', date) < DATE_TRUNC('month', CURRENT_DATE)
+                                   AND DATE_TRUNC('month', date) < DATE_TRUNC('month', CURRENT_DATE)
                 GROUP BY 1 ORDER BY 1
             `);
 
@@ -1204,8 +1192,7 @@
                     ROUND(SUM(video_engagement_75) * 100.0 / NULLIF(SUM(video_view), 0), 1) as reached_75,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completed
                 FROM analytics
-                WHERE ${w} ${internetClause()}
-            `);
+                WHERE ${w}            `);
 
             const row = data[0];
             const labels = ['Completed (100%)', 'Reached 75%', 'Reached 50%', 'Reached 25%', 'Started (1%)'];
@@ -1304,8 +1291,7 @@
                     END as sort_order,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion
                 FROM analytics
-                WHERE ${w} AND video_duration_seconds > 0 AND video_view > 0 ${internetClause()}
-                GROUP BY 1, 2 ORDER BY sort_order
+                WHERE ${w} AND video_duration_seconds > 0 AND video_view > 0                GROUP BY 1, 2 ORDER BY sort_order
             `);
 
             destroyChart('chartDurationCompletion');
@@ -1438,8 +1424,7 @@
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion,
                     ROUND(SUM(video_engagement_50) * 100.0 / NULLIF(SUM(video_view), 0), 1) as halfway
                 FROM analytics
-                WHERE ${w} AND video_view > 0 ${internetClause()}
-                GROUP BY channel, video_id
+                WHERE ${w} AND video_view > 0                GROUP BY channel, video_id
                 HAVING SUM(video_view) >= 100
                 ORDER BY completion DESC
                 LIMIT 20
@@ -1562,8 +1547,7 @@
                     channel,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion
                 FROM analytics
-                WHERE ${w} AND video_view > 0 ${internetClause()}
-                GROUP BY channel
+                WHERE ${w} AND video_view > 0                GROUP BY channel
                 ORDER BY completion DESC
             `);
 
@@ -1608,8 +1592,7 @@
                     ROUND(SUM(video_engagement_75) * 100.0 / NULLIF(SUM(video_view), 0), 1) as reached_75,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completed
                 FROM analytics
-                WHERE ${w} AND video_view > 0 ${internetClause()}
-                GROUP BY channel
+                WHERE ${w} AND video_view > 0                GROUP BY channel
                 ORDER BY completed DESC
             `);
 
