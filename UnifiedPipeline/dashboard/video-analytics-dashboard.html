@@ -956,11 +956,27 @@
             return s.length > maxLen ? s.substring(0, maxLen) + '...' : s;
         }
 
-        function coerce(v) {
+        // Decode Arrow Decimal128 stored as Uint32Array(4) — little-endian 128-bit int
+        function decodeDecimal128(arr, scale) {
+            const lo = BigInt(arr[0]) | (BigInt(arr[1]) << 32n);
+            const hi = BigInt(arr[2]) | (BigInt(arr[3]) << 32n);
+            let val = lo | (hi << 64n);
+            // Two's complement for negative values
+            if (arr[3] & 0x80000000) val -= (1n << 128n);
+            let num = Number(val);
+            if (scale) num /= Math.pow(10, scale);
+            return num;
+        }
+
+        function coerce(v, fieldType) {
             if (v == null) return null;
             if (typeof v === 'bigint') return Number(v);
             if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return v;
-            // Arrow objects (Date, Decimal, Int64 struct, etc.)
+            // Arrow Decimal128 → Uint32Array(4)
+            if (v instanceof Uint32Array && v.length === 4) {
+                return decodeDecimal128(v, fieldType?.scale);
+            }
+            // Other Arrow objects
             if (typeof v.valueOf === 'function') {
                 const prim = v.valueOf();
                 if (typeof prim === 'bigint') return Number(prim);
@@ -973,31 +989,12 @@
 
         async function query(sql) {
             const result = await conn.query(sql);
-            const cols = result.schema.fields.map(f => f.name);
-            const types = result.schema.fields.map(f => f.type.toString());
-            const rows = result.toArray();
-
-            // Debug: log schema types and first row raw values for every query
-            if (rows.length > 0) {
-                const firstRow = rows[0];
-                const debug = {};
-                for (let i = 0; i < cols.length; i++) {
-                    const raw = firstRow[cols[i]];
-                    debug[cols[i]] = {
-                        arrowType: types[i],
-                        jsType: typeof raw,
-                        constructor: raw?.constructor?.name,
-                        raw: typeof raw === 'bigint' ? raw.toString() + 'n' : raw,
-                        coerced: coerce(raw)
-                    };
-                }
-                console.log('query debug:', sql.trim().substring(0, 80), debug);
-            }
-
-            return rows.map(row => {
+            const fields = result.schema.fields;
+            const cols = fields.map(f => f.name);
+            return result.toArray().map(row => {
                 const obj = {};
-                for (const key of cols) {
-                    obj[key] = coerce(row[key]);
+                for (let i = 0; i < cols.length; i++) {
+                    obj[cols[i]] = coerce(row[cols[i]], fields[i].type);
                 }
                 return obj;
             });
