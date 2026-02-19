@@ -724,26 +724,32 @@
             const baseUrl = window.location.origin + window.location.pathname.replace(/\/[^\/]*$/, '');
             const pathsToTry = [
                 `${baseUrl}/../output/parquet/`,
-                `${baseUrl}/output/parquet/`,
-                `${window.location.origin}/output/parquet/`
+                `${window.location.origin}/output/parquet/`,
+                `${baseUrl}/output/parquet/`
             ];
 
-            async function loadWithFallback(viewName, relativePath, statusText) {
+            async function fetchAndRegister(fileName, relativePath, statusText) {
+                let lastError;
                 for (const basePath of pathsToTry) {
                     try {
                         const fullPath = basePath + relativePath;
-                        await conn.query(`CREATE VIEW ${viewName} AS SELECT * FROM read_parquet('${fullPath}')`);
+                        setLoadingText(`Fetching ${fileName}...`);
+                        const response = await fetch(fullPath);
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        const buffer = await response.arrayBuffer();
+                        await db.registerFileBuffer(fileName, new Uint8Array(buffer));
+                        await conn.query(`CREATE VIEW ${fileName.replace('.parquet', '')} AS SELECT * FROM read_parquet('${fileName}')`);
                         setLoadingText(statusText);
                         return;
                     } catch (e) {
-                        // Try next path
+                        lastError = e;
                     }
                 }
-                throw new Error(`Could not find ${relativePath}`);
+                throw new Error(`Could not load ${relativePath}: ${lastError?.message}`);
             }
 
-            await loadWithFallback('facts', 'facts/daily_analytics_all.parquet', 'Loaded daily analytics...');
-            await loadWithFallback('dims', 'dimensions/video_metadata.parquet', 'Loaded video metadata...');
+            await fetchAndRegister('facts.parquet', 'facts/daily_analytics_all.parquet', 'Loaded daily analytics...');
+            await fetchAndRegister('dims.parquet', 'dimensions/video_metadata.parquet', 'Loaded video metadata...');
 
             // Create joined view for convenience
             setLoadingText('Creating analytics view...');
