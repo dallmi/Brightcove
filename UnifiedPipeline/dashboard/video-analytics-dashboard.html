@@ -895,20 +895,29 @@
         // ====================================================================
         // HELPERS
         // ====================================================================
+        function toNum(n) {
+            if (typeof n === 'bigint') return Number(n);
+            if (n == null) return NaN;
+            return Number(n);
+        }
+
         function fmt(n) {
-            if (n == null || isNaN(n)) return '-';
-            return Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+            const v = toNum(n);
+            if (isNaN(v)) return '-';
+            return v.toLocaleString('en-US', { maximumFractionDigits: 0 });
         }
 
         function fmtPct(n) {
-            if (n == null || isNaN(n)) return '-';
-            return Number(n).toFixed(1) + '%';
+            const v = toNum(n);
+            if (isNaN(v)) return '-';
+            return v.toFixed(1) + '%';
         }
 
         function fmtDuration(seconds) {
-            if (seconds == null || isNaN(seconds)) return '-';
-            const m = Math.floor(seconds / 60);
-            const s = Math.round(seconds % 60);
+            const v = toNum(seconds);
+            if (isNaN(v)) return '-';
+            const m = Math.floor(v / 60);
+            const s = Math.round(v % 60);
             return m > 0 ? `${m}m ${s}s` : `${s}s`;
         }
 
@@ -947,32 +956,14 @@
             return s.length > maxLen ? s.substring(0, maxLen) + '...' : s;
         }
 
-        function coerce(v) {
-            if (typeof v === 'bigint') return Number(v);
-            if (v !== null && typeof v === 'object') {
-                // DuckDB Date/Timestamp objects may wrap BigInt internally
-                if (typeof v.valueOf === 'function') {
-                    const prim = v.valueOf();
-                    if (typeof prim === 'bigint') return Number(prim);
-                }
-                // Arrow Decimal types
-                if (typeof v.toString === 'function' && v.constructor && v.constructor.name !== 'Object') {
-                    return Number(v.toString());
-                }
-            }
-            return v;
-        }
-
         async function query(sql) {
             const result = await conn.query(sql);
-            const cols = result.schema.fields.map(f => f.name);
-            return result.toArray().map(row => {
-                const obj = {};
-                for (const key of cols) {
-                    obj[key] = coerce(row[key]);
-                }
-                return obj;
-            });
+            // Use JSON round-trip to convert all Arrow/BigInt types to plain JS
+            return JSON.parse(
+                JSON.stringify(result.toArray(), (_, v) =>
+                    typeof v === 'bigint' ? Number(v) : v
+                )
+            );
         }
 
         // ====================================================================
