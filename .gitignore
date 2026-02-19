@@ -43,6 +43,9 @@ logs/
 .DS_Store
 Thumbs.db
 
+# Images/photos
+Bilder/
+
 # Presentations
 UnifiedPipeline/output/KeyInsights_Presentation.pptx
 UnifiedPipeline/scripts/generate_pptx.py

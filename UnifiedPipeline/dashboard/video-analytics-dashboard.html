@@ -9,6 +9,9 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 
+    <!-- SheetJS for XLSX export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
     <!-- DuckDB WASM -->
     <script type="module">
         import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.0/+esm';
@@ -18,23 +21,23 @@
 
     <style>
         :root {
-            --primary: #1a73e8;
-            --primary-dark: #1557b0;
-            --primary-light: #4285f4;
+            --primary: #BD000C;
+            --primary-dark: #9A000A;
+            --primary-light: #D4353F;
             --black: #000000;
             --dark-gray: #333333;
             --medium-gray: #666666;
-            --light-gray: #E5E5E5;
+            --light-gray: #D9D9D9;
             --lighter-gray: #F5F5F5;
             --white: #FFFFFF;
-            --success: #00875A;
-            --success-light: #E3FCEF;
-            --warning: #FF8B00;
-            --warning-light: #FFFAE6;
-            --danger: #DE350B;
-            --danger-light: #FFEBE6;
-            --info: #0052CC;
-            --info-light: #DEEBFF;
+            --success: #6F7A1A;
+            --success-light: #F0F2E6;
+            --warning: #E4A911;
+            --warning-light: #FDF6E3;
+            --danger: #BD000C;
+            --danger-light: #FCEAEB;
+            --info: #333333;
+            --info-light: #ECECEC;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -75,7 +78,33 @@
             display: flex;
             gap: 0.5rem;
             align-items: center;
+            flex-wrap: wrap;
         }
+
+        .date-presets {
+            display: flex;
+            gap: 0;
+            border: 1px solid var(--light-gray);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-right: 0.5rem;
+        }
+
+        .date-preset {
+            padding: 0.35rem 0.6rem;
+            background: var(--white);
+            border: none;
+            border-right: 1px solid var(--light-gray);
+            cursor: pointer;
+            font-size: 0.75rem;
+            color: var(--medium-gray);
+            white-space: nowrap;
+            transition: all 0.15s;
+        }
+
+        .date-preset:last-child { border-right: none; }
+        .date-preset:hover { background: var(--lighter-gray); color: var(--dark-gray); }
+        .date-preset.active { background: var(--primary); color: var(--white); }
 
         .date-filter label {
             font-size: 0.8rem;
@@ -507,6 +536,15 @@
         <h1>Video Analytics Dashboard</h1>
         <div class="header-controls">
             <div class="date-filter">
+                <div class="date-presets">
+                    <button class="date-preset" data-preset="7d" onclick="applyDatePreset('7d')">Last 7 days</button>
+                    <button class="date-preset" data-preset="30d" onclick="applyDatePreset('30d')">Last 30 days</button>
+                    <button class="date-preset" data-preset="this-month" onclick="applyDatePreset('this-month')">This month</button>
+                    <button class="date-preset" data-preset="last-month" onclick="applyDatePreset('last-month')">Last month</button>
+                    <button class="date-preset" data-preset="ytd" onclick="applyDatePreset('ytd')">This year</button>
+                    <button class="date-preset" data-preset="last-year" onclick="applyDatePreset('last-year')">Last year</button>
+                    <button class="date-preset" data-preset="all" onclick="applyDatePreset('all')">All time</button>
+                </div>
                 <label>From:</label>
                 <input type="date" id="dateFrom">
                 <label>To:</label>
@@ -535,7 +573,9 @@
                 <button class="nav-tab" data-nav="content">Content</button>
                 <button class="nav-tab" data-nav="channels">Channels</button>
                 <button class="nav-tab" data-nav="devices">Devices</button>
+                <button class="nav-tab" data-nav="regional">Regional</button>
                 <button class="nav-tab" data-nav="lifecycle">Lifecycle</button>
+                <button class="nav-tab" data-nav="videotable">Video Table</button>
                 <button class="nav-tab" data-nav="explore">Explore</button>
             </div>
 
@@ -580,6 +620,18 @@
 
             <!-- Content Tab -->
             <div class="nav-content" id="nav-content">
+                <h3 class="section-title">Content Trends</h3>
+                <p style="font-size:0.75rem; color:var(--medium-gray); margin-bottom:0.5rem;">Hours viewed per week for the top 10 videos by total watch time.</p>
+                <div class="charts-grid">
+                    <div class="chart-card full-width">
+                        <div class="chart-title">Popular Content by Title
+                            <span class="chart-subtitle">weekly hours viewed</span>
+                        </div>
+                        <div class="chart-container tall"><canvas id="chartContentTrends"></canvas></div>
+                    </div>
+                </div>
+                <h3 class="section-title">Top Videos by Watch Hours</h3>
+                <div id="topVideosByWatchHours"></div>
                 <h3 class="section-title">Duration Sweet Spot</h3>
                 <div class="charts-grid">
                     <div class="chart-card">
@@ -636,6 +688,35 @@
                 </div>
             </div>
 
+            <!-- Regional Tab -->
+            <div class="nav-content" id="nav-regional">
+                <h3 class="section-title">Views by Country</h3>
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <div class="chart-title">Top Countries by Views</div>
+                        <div class="chart-container tall"><canvas id="chartCountryViews"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-title">Completion Rate by Country
+                            <span class="chart-subtitle">min. 100 views</span>
+                        </div>
+                        <div class="chart-container tall"><canvas id="chartCountryEngagement"></canvas></div>
+                    </div>
+                </div>
+                <h3 class="section-title">Avg Watch Time vs Viewers by Country</h3>
+                <p style="font-size:0.75rem; color:var(--medium-gray); margin-bottom:0.5rem;">Bubble size = total watch hours. X = total views, Y = avg seconds viewed per view.</p>
+                <div class="charts-grid">
+                    <div class="chart-card full-width">
+                        <div class="chart-container tall"><canvas id="chartCountryBubble"></canvas></div>
+                    </div>
+                </div>
+                <h3 class="section-title">Country Detail</h3>
+                <div id="countryTable"></div>
+                <h3 class="section-title">Top Videos by Country</h3>
+                <p style="font-size:0.75rem; color:var(--medium-gray); margin-bottom:0.5rem;">Select a country above or use the table to see top-performing videos per region.</p>
+                <div id="countryTopVideos"></div>
+            </div>
+
             <!-- Lifecycle Tab -->
             <div class="nav-content" id="nav-lifecycle">
                 <h3 class="section-title">Stale Content (Not viewed in 180+ days)</h3>
@@ -643,6 +724,17 @@
                 <div id="staleContent"></div>
                 <h3 class="section-title">Top Performers (Last 30 Days)</h3>
                 <div id="recentPerformers"></div>
+            </div>
+
+            <!-- Video Table Tab -->
+            <div class="nav-content" id="nav-videotable">
+                <div class="table-controls" style="flex-wrap:wrap;">
+                    <button class="btn btn-secondary" onclick="exportVideoTable('csv')">Export CSV</button>
+                    <button class="btn btn-secondary" onclick="exportVideoTable('excel')">Export Excel</button>
+                    <span style="font-size:0.75rem;color:var(--medium-gray);margin-left:auto;" id="videoTableCount"></span>
+                </div>
+                <div id="videoTableContainer"></div>
+                <div id="videoTablePagination" style="display:flex;gap:0.5rem;align-items:center;justify-content:center;margin-top:0.75rem;"></div>
             </div>
 
             <!-- Explore Tab -->
@@ -665,17 +757,17 @@
         let allChannels = [];
 
         const COLORS = {
-            primary: '#1a73e8',
-            primaryLight: '#4285f4',
-            success: '#00875A',
-            warning: '#FF8B00',
-            danger: '#DE350B',
-            info: '#0052CC',
-            gray: '#999999',
+            primary: '#BD000C',
+            primaryLight: '#D4353F',
+            success: '#6F7A1A',
+            warning: '#E4A911',
+            danger: '#BD000C',
+            info: '#333333',
+            gray: '#8C8C8C',
             palette: [
-                '#1a73e8', '#e74c3c', '#2ecc71', '#9b59b6', '#f39c12',
-                '#1abc9c', '#e67e22', '#3498db', '#e91e63', '#00bcd4',
-                '#ff5722'
+                '#BD000C', '#333333', '#6E2B2B', '#8B6914', '#8C8C8C',
+                '#8B3A3A', '#A07D1E', '#B4B4B4', '#A04040', '#6F7A1A',
+                '#E4A911'
             ]
         };
 
@@ -876,9 +968,66 @@
             dateFilter.from = document.getElementById('dateFrom').value;
             dateFilter.to = document.getElementById('dateTo').value;
             if (dateFilter.from && dateFilter.to) {
+                clearPresetActive();
                 updateActiveFilters();
                 await renderDashboard();
             }
+        }
+
+        async function applyDatePreset(preset) {
+            const today = new Date();
+            let from, to;
+
+            switch (preset) {
+                case '7d':
+                    to = today;
+                    from = new Date(today);
+                    from.setDate(from.getDate() - 6);
+                    break;
+                case '30d':
+                    to = today;
+                    from = new Date(today);
+                    from.setDate(from.getDate() - 29);
+                    break;
+                case 'this-month':
+                    from = new Date(today.getFullYear(), today.getMonth(), 1);
+                    to = today;
+                    break;
+                case 'last-month':
+                    from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                    to = new Date(today.getFullYear(), today.getMonth(), 0);
+                    break;
+                case 'ytd':
+                    from = new Date(today.getFullYear(), 0, 1);
+                    to = today;
+                    break;
+                case 'last-year':
+                    from = new Date(today.getFullYear() - 1, 0, 1);
+                    to = new Date(today.getFullYear() - 1, 11, 31);
+                    break;
+                case 'all':
+                    await setInitialDateRange();
+                    clearPresetActive();
+                    document.querySelector(`.date-preset[data-preset="all"]`).classList.add('active');
+                    updateActiveFilters();
+                    await renderDashboard();
+                    return;
+            }
+
+            const fmt = d => d.toISOString().split('T')[0];
+            document.getElementById('dateFrom').value = fmt(from);
+            document.getElementById('dateTo').value = fmt(to);
+            dateFilter.from = fmt(from);
+            dateFilter.to = fmt(to);
+
+            clearPresetActive();
+            document.querySelector(`.date-preset[data-preset="${preset}"]`).classList.add('active');
+            updateActiveFilters();
+            await renderDashboard();
+        }
+
+        function clearPresetActive() {
+            document.querySelectorAll('.date-preset').forEach(b => b.classList.remove('active'));
         }
 
         async function resetDateFilter() {
@@ -887,6 +1036,7 @@
             videoSearchValue = '';
             document.getElementById('channelFilter').value = '';
             document.getElementById('videoSearch').value = '';
+            clearPresetActive();
             updateActiveFilters();
             await renderDashboard();
         }
@@ -940,6 +1090,8 @@
                     renderMonthlyEngagement(),
                     renderFunnel(),
                     renderChannelViews(),
+                    renderContentTrends(),
+                    renderTopVideosByWatchHours(),
                     renderDurationCompletion(),
                     renderDurationViews(),
                     renderTopVideosByViews(),
@@ -952,9 +1104,15 @@
                     renderDevicePie(),
                     renderDeviceBar(),
                     renderDeviceTrend(),
+                    renderCountryViews(),
+                    renderCountryEngagement(),
+                    renderCountryBubble(),
+                    renderCountryTable(),
+                    renderCountryTopVideos(),
                     renderStaleContent(),
                     renderRecentPerformers(),
                     renderExploreTable(),
+                    renderVideoTable(),
                     populateChannelFilter()
                 ]);
                 updateStatus('success', `Updated: ${new Date().toLocaleTimeString()}`);
@@ -1054,8 +1212,17 @@
                 FROM analytics
                 WHERE ${w}            `);
 
+            const libData = await query(`
+                SELECT
+                    COUNT(DISTINCT video_id) as total_library,
+                    COUNT(DISTINCT CASE WHEN video_view > 0 THEN video_id END) as viewed_videos
+                FROM analytics
+                WHERE ${w}            `);
+
             const row = data[0];
             const eng = engData[0];
+            const lib = libData[0];
+            const libraryPct = lib.total_library > 0 ? (lib.viewed_videos * 100.0 / lib.total_library).toFixed(1) : 0;
 
             document.getElementById('kpiCards').innerHTML = `
                 <div class="kpi-card highlight">
@@ -1081,7 +1248,11 @@
                 <div class="kpi-card ${eng.completion_rate > 50 ? 'success' : 'warning'}">
                     <div class="kpi-label">Completion Rate</div>
                     <div class="kpi-value">${fmtPct(eng.completion_rate)}</div>
-                    <div class="kpi-subtitle"></div>
+                </div>
+                <div class="kpi-card info">
+                    <div class="kpi-label">Library Viewed</div>
+                    <div class="kpi-value">${libraryPct}%</div>
+                    <div class="kpi-subtitle">${fmt(lib.viewed_videos)} of ${fmt(lib.total_library)} videos</div>
                 </div>
             `;
         }
@@ -1197,7 +1368,7 @@
             const row = data[0];
             const labels = ['Completed (100%)', 'Reached 75%', 'Reached 50%', 'Reached 25%', 'Started (1%)'];
             const values = [row.completed, row.reached_75, row.reached_50, row.reached_25, row.started];
-            const colors = ['#2ecc71', '#3498db', '#9b59b6', '#e74c3c', '#f39c12'];
+            const colors = ['#6F7A1A', '#333333', '#6E2B2B', '#BD000C', '#E4A911'];
 
             destroyChart('chartFunnel');
             const ctx = document.getElementById('chartFunnel').getContext('2d');
@@ -1381,6 +1552,108 @@
                     }
                 }
             });
+        }
+
+        // ====================================================================
+        // CONTENT TRENDS (weekly hours viewed for top videos)
+        // ====================================================================
+        async function renderContentTrends() {
+            const w = getWhereClause();
+            // Find top 10 videos by total watch hours
+            const topVideos = await query(`
+                SELECT video_id, MAX(name) as name,
+                    ROUND(SUM(video_seconds_viewed) / 3600.0, 1) as hours
+                FROM analytics
+                WHERE ${w} AND video_seconds_viewed > 0
+                GROUP BY video_id
+                ORDER BY hours DESC
+                LIMIT 10
+            `);
+
+            if (topVideos.length === 0) {
+                destroyChart('chartContentTrends');
+                return;
+            }
+
+            const videoIds = topVideos.map(v => `'${v.video_id}'`).join(',');
+            const weekly = await query(`
+                SELECT
+                    video_id,
+                    DATE_TRUNC('week', date)::VARCHAR as week,
+                    ROUND(SUM(video_seconds_viewed) / 3600.0, 2) as hours
+                FROM analytics
+                WHERE ${w} AND video_id IN (${videoIds})
+                  AND DATE_TRUNC('week', date) < DATE_TRUNC('week', CURRENT_DATE)
+                GROUP BY video_id, 2
+                ORDER BY 2
+            `);
+
+            // Build unique sorted weeks
+            const weeks = [...new Set(weekly.map(r => r.week.substring(0, 10)))].sort();
+
+            // Build datasets
+            const datasets = topVideos.map((v, i) => {
+                const videoWeeks = weekly.filter(r => r.video_id === v.video_id);
+                const weekMap = {};
+                videoWeeks.forEach(r => weekMap[r.week.substring(0, 10)] = r.hours);
+                return {
+                    label: truncateStr(v.name, 40),
+                    data: weeks.map(w => weekMap[w] || 0),
+                    borderColor: COLORS.palette[i % COLORS.palette.length],
+                    backgroundColor: COLORS.palette[i % COLORS.palette.length] + '20',
+                    tension: 0.3,
+                    pointRadius: 1,
+                    borderWidth: 2
+                };
+            });
+
+            destroyChart('chartContentTrends');
+            const ctx = document.getElementById('chartContentTrends').getContext('2d');
+            charts['chartContentTrends'] = new Chart(ctx, {
+                type: 'line',
+                data: { labels: weeks, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+                        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.raw.toFixed(1)}h` } }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, title: { display: true, text: 'Hours viewed' } },
+                        x: { ticks: { maxRotation: 45, maxTicksLimit: 20 } }
+                    }
+                }
+            });
+        }
+
+        // ====================================================================
+        // TOP VIDEOS BY WATCH HOURS
+        // ====================================================================
+        async function renderTopVideosByWatchHours() {
+            const w = getWhereClause();
+            const data = await query(`
+                SELECT
+                    channel,
+                    video_id,
+                    MAX(name) as name,
+                    ROUND(SUM(video_seconds_viewed) / 3600.0, 1) as watch_hours,
+                    SUM(video_view) as views,
+                    ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion
+                FROM analytics
+                WHERE ${w} AND video_seconds_viewed > 0
+                GROUP BY channel, video_id
+                ORDER BY watch_hours DESC
+                LIMIT 20
+            `);
+
+            document.getElementById('topVideosByWatchHours').innerHTML = renderTable(data, [
+                { key: 'channel', label: 'Channel' },
+                { key: 'name', label: 'Video Name', fmt: v => truncateStr(v, 70) },
+                { key: 'watch_hours', label: 'Watch Hours', cls: 'text-right', fmt: v => v != null ? Number(v).toFixed(1) : '-' },
+                { key: 'views', label: 'Views', cls: 'text-right', fmt: fmt },
+                { key: 'completion', label: 'Completion', cls: 'text-right', fmt: fmtPct }
+            ]);
         }
 
         // ====================================================================
@@ -1624,7 +1897,7 @@
             const row = data[0];
             const labels = [];
             const values = [];
-            const colors = ['#3498db', '#e74c3c', '#2ecc71', '#9b59b6'];
+            const colors = ['#333333', '#BD000C', '#8C8C8C', '#6E2B2B'];
 
             if (row.desktop > 0) { labels.push('Desktop'); values.push(row.desktop); }
             if (row.mobile > 0) { labels.push('Mobile'); values.push(row.mobile); }
@@ -1694,7 +1967,7 @@
                     labels: entries.map(e => e.label),
                     datasets: [{
                         data: entries.map(e => e.value),
-                        backgroundColor: ['#3498db99', '#e74c3c99', '#2ecc7199', '#9b59b699'],
+                        backgroundColor: ['#33333399', '#BD000C99', '#8C8C8C99', '#6E2B2B99'],
                         borderWidth: 0
                     }]
                 },
@@ -1735,14 +2008,14 @@
                         {
                             label: 'Desktop %',
                             data: data.map(r => r.desktop_pct),
-                            borderColor: '#3498db',
+                            borderColor: '#333333',
                             tension: 0.3,
                             pointRadius: 3
                         },
                         {
                             label: 'Mobile %',
                             data: data.map(r => r.mobile_pct),
-                            borderColor: '#e74c3c',
+                            borderColor: '#BD000C',
                             tension: 0.3,
                             pointRadius: 3
                         }
@@ -1758,6 +2031,226 @@
                     }
                 }
             });
+        }
+
+        // ====================================================================
+        // REGIONAL: COUNTRY VIEWS
+        // ====================================================================
+        async function renderCountryViews() {
+            const w = getWhereClause();
+            const data = await query(`
+                SELECT
+                    COALESCE(NULLIF(country, ''), 'Unknown') as country,
+                    SUM(video_view) as views
+                FROM analytics
+                WHERE ${w} AND video_view > 0
+                GROUP BY 1
+                ORDER BY views DESC
+                LIMIT 15
+            `);
+
+            destroyChart('chartCountryViews');
+            const ctx = document.getElementById('chartCountryViews').getContext('2d');
+            charts['chartCountryViews'] = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.map(r => r.country),
+                    datasets: [{
+                        data: data.map(r => r.views),
+                        backgroundColor: data.map((_, i) => COLORS.palette[i % COLORS.palette.length] + '99'),
+                        borderColor: data.map((_, i) => COLORS.palette[i % COLORS.palette.length]),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { beginAtZero: true, ticks: { callback: v => fmt(v) } }
+                    }
+                }
+            });
+        }
+
+        // ====================================================================
+        // REGIONAL: COUNTRY BUBBLE CHART
+        // ====================================================================
+        async function renderCountryBubble() {
+            const w = getWhereClause();
+            const data = await query(`
+                SELECT
+                    COALESCE(NULLIF(country, ''), 'Unknown') as country,
+                    SUM(video_view) as views,
+                    ROUND(SUM(video_seconds_viewed) * 1.0 / NULLIF(SUM(video_view), 0), 1) as avg_seconds_per_view,
+                    ROUND(SUM(video_seconds_viewed) / 3600.0, 1) as watch_hours
+                FROM analytics
+                WHERE ${w} AND video_view > 0
+                GROUP BY 1
+                HAVING SUM(video_view) >= 50
+                ORDER BY views DESC
+                LIMIT 30
+            `);
+
+            const maxHours = Math.max(...data.map(r => r.watch_hours), 1);
+
+            destroyChart('chartCountryBubble');
+            const ctx = document.getElementById('chartCountryBubble').getContext('2d');
+            charts['chartCountryBubble'] = new Chart(ctx, {
+                type: 'bubble',
+                data: {
+                    datasets: data.map((r, i) => ({
+                        label: r.country,
+                        data: [{
+                            x: r.views,
+                            y: r.avg_seconds_per_view,
+                            r: Math.max(4, Math.sqrt(r.watch_hours / maxHours) * 40)
+                        }],
+                        backgroundColor: COLORS.palette[i % COLORS.palette.length] + '88',
+                        borderColor: COLORS.palette[i % COLORS.palette.length],
+                        borderWidth: 1
+                    }))
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => {
+                                    const d = data[ctx.datasetIndex];
+                                    return [
+                                        d.country,
+                                        `Views: ${fmt(d.views)}`,
+                                        `Avg: ${d.avg_seconds_per_view}s per view`,
+                                        `Watch hours: ${d.watch_hours}`
+                                    ];
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Total Views' },
+                            ticks: { callback: v => fmt(v) }
+                        },
+                        y: {
+                            title: { display: true, text: 'Avg Seconds per View' },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // ====================================================================
+        // REGIONAL: COUNTRY ENGAGEMENT
+        // ====================================================================
+        async function renderCountryEngagement() {
+            const w = getWhereClause();
+            const data = await query(`
+                SELECT
+                    COALESCE(NULLIF(country, ''), 'Unknown') as country,
+                    SUM(video_view) as views,
+                    ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion
+                FROM analytics
+                WHERE ${w} AND video_view > 0
+                GROUP BY 1
+                HAVING SUM(video_view) >= 100
+                ORDER BY completion DESC
+                LIMIT 15
+            `);
+
+            destroyChart('chartCountryEngagement');
+            const ctx = document.getElementById('chartCountryEngagement').getContext('2d');
+            charts['chartCountryEngagement'] = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.map(r => r.country),
+                    datasets: [{
+                        data: data.map(r => r.completion),
+                        backgroundColor: data.map(r => r.completion > 50 ? COLORS.success + '99' : r.completion > 30 ? COLORS.warning + '99' : COLORS.danger + '99'),
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => fmtPct(ctx.raw),
+                                afterLabel: (ctx) => `${fmt(data[ctx.dataIndex].views)} views`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } }
+                    }
+                }
+            });
+        }
+
+        // ====================================================================
+        // REGIONAL: COUNTRY TABLE
+        // ====================================================================
+        async function renderCountryTable() {
+            const w = getWhereClause();
+            const data = await query(`
+                SELECT
+                    COALESCE(NULLIF(country, ''), 'Unknown') as country,
+                    COUNT(DISTINCT video_id) as num_videos,
+                    SUM(video_view) as views,
+                    ROUND(SUM(video_view) * 1.0 / NULLIF(COUNT(DISTINCT video_id), 0), 0) as views_per_video,
+                    ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion,
+                    ROUND(SUM(views_mobile) * 100.0 / NULLIF(SUM(video_view), 0), 1) as mobile_pct
+                FROM analytics
+                WHERE ${w} AND video_view > 0
+                GROUP BY 1
+                ORDER BY views DESC
+            `);
+
+            document.getElementById('countryTable').innerHTML = renderTable(data, [
+                { key: 'country', label: 'Country' },
+                { key: 'num_videos', label: 'Videos', cls: 'text-right', fmt: fmt },
+                { key: 'views', label: 'Total Views', cls: 'text-right', fmt: fmt },
+                { key: 'views_per_video', label: 'Views/Video', cls: 'text-right', fmt: fmt },
+                { key: 'completion', label: 'Completion', cls: 'text-right', fmt: fmtPct },
+                { key: 'mobile_pct', label: 'Mobile %', cls: 'text-right', fmt: fmtPct }
+            ]);
+        }
+
+        // ====================================================================
+        // REGIONAL: TOP VIDEOS BY COUNTRY
+        // ====================================================================
+        async function renderCountryTopVideos() {
+            const w = getWhereClause();
+            const data = await query(`
+                SELECT
+                    COALESCE(NULLIF(country, ''), 'Unknown') as country,
+                    channel,
+                    video_id,
+                    MAX(name) as name,
+                    SUM(video_view) as views,
+                    ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion
+                FROM analytics
+                WHERE ${w} AND video_view > 0
+                GROUP BY 1, 2, 3
+                ORDER BY views DESC
+                LIMIT 30
+            `);
+
+            document.getElementById('countryTopVideos').innerHTML = renderTable(data, [
+                { key: 'country', label: 'Country' },
+                { key: 'channel', label: 'Channel' },
+                { key: 'name', label: 'Video Name', fmt: v => truncateStr(v, 60) },
+                { key: 'views', label: 'Views', cls: 'text-right', fmt: fmt },
+                { key: 'completion', label: 'Completion', cls: 'text-right', fmt: fmtPct }
+            ]);
         }
 
         // ====================================================================
@@ -1867,6 +2360,213 @@
                 { key: 'completion', label: 'Completion', cls: 'text-right', fmt: fmtPct },
                 { key: 'duration_sec', label: 'Duration', cls: 'text-right', fmt: fmtDuration }
             ]);
+        }
+
+        // ====================================================================
+        // VIDEO TABLE (full ranked table matching Brightcove export style)
+        // ====================================================================
+        let videoTableData = [];
+        let videoTableSort = { key: 'views', dir: 'desc' };
+        let videoTablePage = 0;
+        const VIDEO_TABLE_PAGE_SIZE = 50;
+
+        async function renderVideoTable() {
+            const w = getWhereClause();
+            videoTableData = await query(`
+                SELECT
+                    video_id,
+                    MAX(name) as name,
+                    MAX(channel) as channel,
+                    SUM(video_view) as views,
+                    SUM(video_impression) as impressions,
+                    ROUND(SUM(video_view) * 100.0 / NULLIF(SUM(video_impression), 0), 1) as play_rate,
+                    ROUND(SUM(video_engagement_1) * 100.0 / NULLIF(SUM(video_view), 0), 1) as pct_1,
+                    ROUND(SUM(video_engagement_25) * 100.0 / NULLIF(SUM(video_view), 0), 1) as pct_25,
+                    ROUND(SUM(video_engagement_50) * 100.0 / NULLIF(SUM(video_view), 0), 1) as pct_50,
+                    ROUND(SUM(video_engagement_75) * 100.0 / NULLIF(SUM(video_view), 0), 1) as pct_75,
+                    ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as pct_100,
+                    SUM(views_desktop) as desktop,
+                    SUM(views_mobile) as mobile,
+                    SUM(views_tablet) as tablet,
+                    ROUND(MAX(video_duration_seconds), 0) as duration_sec,
+                    ROUND(SUM(video_seconds_viewed) / 3600.0, 2) as watch_hours,
+                    ROUND(SUM(video_seconds_viewed) * 100.0 / NULLIF(SUM(video_view) * MAX(video_duration_seconds), 0), 1) as engagement_score
+                FROM analytics
+                WHERE ${w} AND video_view > 0
+                GROUP BY video_id
+                ORDER BY views DESC
+            `);
+            videoTablePage = 0;
+            renderVideoTablePage();
+        }
+
+        function renderVideoTablePage() {
+            const cols = [
+                { key: '_rank', label: 'Rank', cls: 'text-right' },
+                { key: 'video_id', label: 'Video ID' },
+                { key: 'name', label: 'Video Name' },
+                { key: 'channel', label: 'Channel' },
+                { key: 'views', label: 'Views', cls: 'text-right', fmt: fmt },
+                { key: 'impressions', label: 'Impressions', cls: 'text-right', fmt: fmt },
+                { key: 'play_rate', label: 'Play Rate %', cls: 'text-right', fmt: fmtPct },
+                { key: 'pct_1', label: 'Views at 1%', cls: 'text-right', fmt: fmtPct },
+                { key: 'pct_25', label: 'Views at 25%', cls: 'text-right', fmt: fmtPct },
+                { key: 'pct_50', label: 'Views at 50%', cls: 'text-right', fmt: fmtPct },
+                { key: 'pct_75', label: 'Views at 75%', cls: 'text-right', fmt: fmtPct },
+                { key: 'pct_100', label: 'Views at 100%', cls: 'text-right', fmt: fmtPct },
+                { key: 'desktop', label: 'Desktop', cls: 'text-right', fmt: fmt },
+                { key: 'mobile', label: 'Mobile', cls: 'text-right', fmt: fmt },
+                { key: 'tablet', label: 'Tablet', cls: 'text-right', fmt: fmt },
+                { key: 'duration_sec', label: 'Duration', cls: 'text-right', fmt: fmtDuration },
+                { key: 'watch_hours', label: 'Watch Hours', cls: 'text-right', fmt: v => v != null ? Number(v).toFixed(2) : '-' },
+                { key: 'engagement_score', label: 'Engagement %', cls: 'text-right', fmt: fmtPct }
+            ];
+
+            // Sort
+            const sorted = [...videoTableData];
+            const sk = videoTableSort.key;
+            if (sk && sk !== '_rank') {
+                sorted.sort((a, b) => {
+                    const va = a[sk] ?? -Infinity;
+                    const vb = b[sk] ?? -Infinity;
+                    if (typeof va === 'string') return videoTableSort.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+                    return videoTableSort.dir === 'asc' ? va - vb : vb - va;
+                });
+            }
+
+            const total = sorted.length;
+            const totalPages = Math.ceil(total / VIDEO_TABLE_PAGE_SIZE);
+            const start = videoTablePage * VIDEO_TABLE_PAGE_SIZE;
+            const page = sorted.slice(start, start + VIDEO_TABLE_PAGE_SIZE);
+
+            document.getElementById('videoTableCount').textContent = `${total} videos`;
+
+            // Build header with sort indicators
+            const arrow = (key) => {
+                if (videoTableSort.key !== key) return '';
+                return videoTableSort.dir === 'asc' ? ' \u25B2' : ' \u25BC';
+            };
+            const header = cols.map(col => {
+                const sortable = col.key !== '_rank';
+                return `<th class="${col.cls || ''}" ${sortable ? `onclick="sortVideoTable('${col.key}')" style="cursor:pointer;user-select:none;"` : ''}>${col.label}${arrow(col.key)}</th>`;
+            }).join('');
+
+            const rows = page.map((row, i) => {
+                const rank = start + i + 1;
+                return '<tr>' + cols.map(col => {
+                    let val;
+                    if (col.key === '_rank') val = rank;
+                    else val = row[col.key];
+                    const display = col.fmt ? col.fmt(val) : (val != null ? val : '-');
+                    const tdStyle = col.key === 'name' ? ' style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"' : '';
+                    return `<td class="${col.cls || ''}"${tdStyle}>${display}</td>`;
+                }).join('') + '</tr>';
+            }).join('');
+
+            document.getElementById('videoTableContainer').innerHTML = `
+                <div class="table-container" style="max-height:600px;">
+                    <table>
+                        <thead><tr>${header}</tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            `;
+
+            // Pagination
+            if (totalPages > 1) {
+                let pag = '';
+                pag += `<button class="btn btn-secondary" onclick="videoTableGoPage(0)" ${videoTablePage === 0 ? 'disabled' : ''}>&laquo;</button>`;
+                pag += `<button class="btn btn-secondary" onclick="videoTableGoPage(${videoTablePage - 1})" ${videoTablePage === 0 ? 'disabled' : ''}>&lsaquo;</button>`;
+                pag += `<span style="font-size:0.8rem;">Page ${videoTablePage + 1} of ${totalPages}</span>`;
+                pag += `<button class="btn btn-secondary" onclick="videoTableGoPage(${videoTablePage + 1})" ${videoTablePage >= totalPages - 1 ? 'disabled' : ''}>&rsaquo;</button>`;
+                pag += `<button class="btn btn-secondary" onclick="videoTableGoPage(${totalPages - 1})" ${videoTablePage >= totalPages - 1 ? 'disabled' : ''}>&raquo;</button>`;
+                document.getElementById('videoTablePagination').innerHTML = pag;
+            } else {
+                document.getElementById('videoTablePagination').innerHTML = '';
+            }
+        }
+
+        function sortVideoTable(key) {
+            if (videoTableSort.key === key) {
+                videoTableSort.dir = videoTableSort.dir === 'asc' ? 'desc' : 'asc';
+            } else {
+                videoTableSort.key = key;
+                videoTableSort.dir = key === 'name' || key === 'channel' || key === 'video_id' ? 'asc' : 'desc';
+            }
+            videoTablePage = 0;
+            renderVideoTablePage();
+        }
+
+        function videoTableGoPage(p) {
+            const totalPages = Math.ceil(videoTableData.length / VIDEO_TABLE_PAGE_SIZE);
+            videoTablePage = Math.max(0, Math.min(p, totalPages - 1));
+            renderVideoTablePage();
+        }
+
+        // ====================================================================
+        // VIDEO TABLE EXPORT (CSV / Excel)
+        // ====================================================================
+        function exportVideoTable(format) {
+            if (!videoTableData || videoTableData.length === 0) return;
+
+            const headers = [
+                'Rank', 'Video ID', 'Video Name', 'Channel', 'Views', 'Impressions',
+                'Play Rate %', 'Views at 1%', 'Views at 25%', 'Views at 50%',
+                'Views at 75%', 'Views at 100%', 'Desktop', 'Mobile', 'Tablet',
+                'Duration (s)', 'Watch Hours', 'Engagement %'
+            ];
+            const keys = [
+                '_rank', 'video_id', 'name', 'channel', 'views', 'impressions',
+                'play_rate', 'pct_1', 'pct_25', 'pct_50', 'pct_75', 'pct_100',
+                'desktop', 'mobile', 'tablet', 'duration_sec', 'watch_hours', 'engagement_score'
+            ];
+
+            // Sort data like current view
+            const sorted = [...videoTableData];
+            const sk = videoTableSort.key;
+            if (sk && sk !== '_rank') {
+                sorted.sort((a, b) => {
+                    const va = a[sk] ?? -Infinity;
+                    const vb = b[sk] ?? -Infinity;
+                    if (typeof va === 'string') return videoTableSort.dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+                    return videoTableSort.dir === 'asc' ? va - vb : vb - va;
+                });
+            }
+
+            const rows = sorted.map((row, i) =>
+                keys.map(k => {
+                    if (k === '_rank') return i + 1;
+                    const v = row[k];
+                    return v != null ? v : '';
+                })
+            );
+
+            if (format === 'csv') {
+                const escape = v => {
+                    const s = String(v);
+                    return s.includes(',') || s.includes('"') || s.includes('\n') ? '"' + s.replace(/"/g, '""') + '"' : s;
+                };
+                const csv = [headers.map(escape).join(','), ...rows.map(r => r.map(escape).join(','))].join('\n');
+                downloadFile(csv, 'video-analytics.csv', 'text/csv;charset=utf-8;');
+            } else {
+                // Build proper .xlsx using SheetJS
+                const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Video Analytics');
+                XLSX.writeFile(wb, 'video-analytics.xlsx');
+            }
+        }
+
+        function downloadFile(content, filename, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
 
         // ====================================================================
