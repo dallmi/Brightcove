@@ -426,6 +426,72 @@
             border-bottom: 1px solid var(--light-gray);
         }
 
+        /* Filter bar */
+        .filter-bar {
+            background: var(--white);
+            padding: 0.6rem 1rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            border-bottom: 1px solid var(--light-gray);
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 0.4rem;
+            align-items: center;
+        }
+
+        .filter-group label {
+            font-size: 0.75rem;
+            color: var(--medium-gray);
+            font-weight: 500;
+        }
+
+        .filter-group select {
+            padding: 0.35rem 0.5rem;
+            border: 1px solid var(--light-gray);
+            border-radius: 4px;
+            font-size: 0.8rem;
+            min-width: 160px;
+        }
+
+        .filter-group select:focus,
+        .filter-group .search-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .active-filters {
+            display: flex;
+            gap: 0.4rem;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-left: auto;
+        }
+
+        .filter-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            padding: 0.2rem 0.5rem;
+            background: var(--info-light);
+            color: var(--info);
+            border-radius: 3px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+
+        .filter-tag .remove {
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.8rem;
+            line-height: 1;
+        }
+
+        .filter-tag .remove:hover { color: var(--danger); }
+
         /* Responsive */
         @media (max-width: 768px) {
             .header { flex-direction: column; gap: 0.5rem; padding: 0.5rem 1rem; }
@@ -471,6 +537,21 @@
                 <button class="nav-tab" data-nav="devices">Devices</button>
                 <button class="nav-tab" data-nav="lifecycle">Lifecycle</button>
                 <button class="nav-tab" data-nav="explore">Explore</button>
+            </div>
+
+            <!-- Global Filters -->
+            <div class="filter-bar" id="filterBar">
+                <div class="filter-group">
+                    <label>Channel:</label>
+                    <select id="channelFilter" onchange="applyFilters()">
+                        <option value="">All Channels</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Video:</label>
+                    <input type="text" class="search-input" id="videoSearch" placeholder="Search by name..." oninput="debounceApplyFilters()">
+                </div>
+                <div id="activeFilters" class="active-filters"></div>
             </div>
 
             <!-- Overview Tab -->
@@ -566,13 +647,6 @@
 
             <!-- Explore Tab -->
             <div class="nav-content" id="nav-explore">
-                <div class="table-controls">
-                    <input type="text" class="search-input" id="videoSearch" placeholder="Search videos by name..." oninput="searchVideos()">
-                    <select id="channelFilter" onchange="searchVideos()" style="padding:0.4rem;border:1px solid var(--light-gray);border-radius:4px;font-size:0.8rem;">
-                        <option value="">All Channels</option>
-                    </select>
-                    <span id="searchResultCount" style="font-size:0.75rem;color:var(--medium-gray);"></span>
-                </div>
                 <div id="exploreTable"></div>
             </div>
         </div>
@@ -584,6 +658,9 @@
         // ====================================================================
         let db, conn;
         let dateFilter = { from: null, to: null };
+        let channelFilterValue = '';
+        let videoSearchValue = '';
+        let debounceTimer = null;
         let charts = {};
         let allChannels = [];
 
@@ -637,9 +714,27 @@
             if (charts[id]) { charts[id].destroy(); delete charts[id]; }
         }
 
-        function getDateWhereClause(col = 'date') {
-            if (!dateFilter.from || !dateFilter.to) return '1=1';
-            return `${col} >= '${dateFilter.from}' AND ${col} <= '${dateFilter.to}'`;
+        function getWhereClause(col = 'date') {
+            const parts = ['1=1'];
+            if (dateFilter.from && dateFilter.to) {
+                parts.push(`${col} >= '${dateFilter.from}' AND ${col} <= '${dateFilter.to}'`);
+            }
+            if (channelFilterValue) {
+                parts.push(`channel = '${channelFilterValue.replace(/'/g, "''")}'`);
+            }
+            if (videoSearchValue.length >= 2) {
+                parts.push(`name ILIKE '%${videoSearchValue.replace(/'/g, "''")}%'`);
+            }
+            return parts.join(' AND ');
+        }
+
+        // When user explicitly picks a channel, don't auto-exclude Internet
+        function shouldExcludeInternet() {
+            return !channelFilterValue;
+        }
+
+        function internetClause() {
+            return shouldExcludeInternet() ? "${internetClause()}" : '';
         }
 
         function truncateStr(s, maxLen = 60) {
@@ -790,12 +885,54 @@
             dateFilter.from = document.getElementById('dateFrom').value;
             dateFilter.to = document.getElementById('dateTo').value;
             if (dateFilter.from && dateFilter.to) {
+                updateActiveFilters();
                 await renderDashboard();
             }
         }
 
         async function resetDateFilter() {
             await setInitialDateRange();
+            channelFilterValue = '';
+            videoSearchValue = '';
+            document.getElementById('channelFilter').value = '';
+            document.getElementById('videoSearch').value = '';
+            updateActiveFilters();
+            await renderDashboard();
+        }
+
+        async function applyFilters() {
+            channelFilterValue = document.getElementById('channelFilter').value;
+            videoSearchValue = document.getElementById('videoSearch').value.trim();
+            updateActiveFilters();
+            await renderDashboard();
+        }
+
+        function debounceApplyFilters() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => applyFilters(), 400);
+        }
+
+        function updateActiveFilters() {
+            const el = document.getElementById('activeFilters');
+            const tags = [];
+            if (channelFilterValue) {
+                tags.push(`<span class="filter-tag">${channelFilterValue} <span class="remove" onclick="clearFilter('channel')">x</span></span>`);
+            }
+            if (videoSearchValue.length >= 2) {
+                tags.push(`<span class="filter-tag">"${videoSearchValue}" <span class="remove" onclick="clearFilter('video')">x</span></span>`);
+            }
+            el.innerHTML = tags.join('');
+        }
+
+        async function clearFilter(type) {
+            if (type === 'channel') {
+                channelFilterValue = '';
+                document.getElementById('channelFilter').value = '';
+            } else if (type === 'video') {
+                videoSearchValue = '';
+                document.getElementById('videoSearch').value = '';
+            }
+            updateActiveFilters();
             await renderDashboard();
         }
 
@@ -826,6 +963,7 @@
                     renderDeviceTrend(),
                     renderStaleContent(),
                     renderRecentPerformers(),
+                    renderExploreTable(),
                     populateChannelFilter()
                 ]);
                 updateStatus('success', `Updated: ${new Date().toLocaleTimeString()}`);
@@ -839,14 +977,14 @@
         // EXECUTIVE SUMMARY
         // ====================================================================
         async function renderExecutiveSummary() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     SUM(video_view) as total_views,
                     COUNT(DISTINCT video_id) as total_videos,
                     COUNT(DISTINCT channel) as total_channels
                 FROM analytics
-                WHERE ${dateWhere}
+                WHERE ${w}
             `);
 
             const engData = await query(`
@@ -854,7 +992,7 @@
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as avg_completion,
                     ROUND(SUM(views_mobile) * 100.0 / NULLIF(SUM(video_view), 0), 1) as mobile_pct
                 FROM analytics
-                WHERE ${dateWhere} AND channel != 'Internet'
+                WHERE ${w} ${internetClause()}
             `);
 
             const row = data[0];
@@ -907,7 +1045,7 @@
         // KPIs
         // ====================================================================
         async function renderKPIs() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     SUM(video_view) as total_views,
@@ -916,7 +1054,7 @@
                     ROUND(SUM(video_seconds_viewed) / 3600.0, 0) as watch_hours,
                     SUM(video_impression) as total_impressions
                 FROM analytics
-                WHERE ${dateWhere}
+                WHERE ${w}
             `);
 
             const engData = await query(`
@@ -924,7 +1062,7 @@
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion_rate,
                     ROUND(SUM(video_engagement_25) * 100.0 / NULLIF(SUM(video_view), 0), 1) as reached_25
                 FROM analytics
-                WHERE ${dateWhere} AND channel != 'Internet'
+                WHERE ${w} ${internetClause()}
             `);
 
             const row = data[0];
@@ -963,13 +1101,13 @@
         // MONTHLY VIEWS
         // ====================================================================
         async function renderMonthlyViews() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     DATE_TRUNC('month', date)::VARCHAR as month,
                     SUM(video_view) as views
                 FROM analytics
-                WHERE ${dateWhere}
+                WHERE ${w}
                   AND DATE_TRUNC('month', date) < DATE_TRUNC('month', CURRENT_DATE)
                 GROUP BY 1 ORDER BY 1
             `);
@@ -1003,15 +1141,15 @@
         // MONTHLY ENGAGEMENT
         // ====================================================================
         async function renderMonthlyEngagement() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     DATE_TRUNC('month', date)::VARCHAR as month,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion,
                     ROUND(SUM(video_engagement_50) * 100.0 / NULLIF(SUM(video_view), 0), 1) as halfway
                 FROM analytics
-                WHERE ${dateWhere}
-                  AND channel != 'Internet'
+                WHERE ${w}
+                  ${internetClause()}
                   AND DATE_TRUNC('month', date) < DATE_TRUNC('month', CURRENT_DATE)
                 GROUP BY 1 ORDER BY 1
             `);
@@ -1057,7 +1195,7 @@
         // ENGAGEMENT FUNNEL
         // ====================================================================
         async function renderFunnel() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     ROUND(SUM(video_engagement_1) * 100.0 / NULLIF(SUM(video_view), 0), 1) as started,
@@ -1066,7 +1204,7 @@
                     ROUND(SUM(video_engagement_75) * 100.0 / NULLIF(SUM(video_view), 0), 1) as reached_75,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completed
                 FROM analytics
-                WHERE ${dateWhere} AND channel != 'Internet'
+                WHERE ${w} ${internetClause()}
             `);
 
             const row = data[0];
@@ -1105,11 +1243,11 @@
         // CHANNEL VIEWS (Overview)
         // ====================================================================
         async function renderChannelViews() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT channel, SUM(video_view) as views
                 FROM analytics
-                WHERE ${dateWhere}
+                WHERE ${w}
                 GROUP BY channel
                 ORDER BY views DESC
             `);
@@ -1143,7 +1281,7 @@
         // DURATION SWEET SPOT
         // ====================================================================
         async function renderDurationCompletion() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     CASE
@@ -1166,7 +1304,7 @@
                     END as sort_order,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion
                 FROM analytics
-                WHERE ${dateWhere} AND video_duration_seconds > 0 AND video_view > 0 AND channel != 'Internet'
+                WHERE ${w} AND video_duration_seconds > 0 AND video_view > 0 ${internetClause()}
                 GROUP BY 1, 2 ORDER BY sort_order
             `);
 
@@ -1198,7 +1336,7 @@
         }
 
         async function renderDurationViews() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     CASE
@@ -1222,7 +1360,7 @@
                     SUM(video_view) as views,
                     COUNT(DISTINCT video_id) as num_videos
                 FROM analytics
-                WHERE ${dateWhere} AND video_duration_seconds > 0 AND video_view > 0
+                WHERE ${w} AND video_duration_seconds > 0 AND video_view > 0
                 GROUP BY 1, 2 ORDER BY sort_order
             `);
 
@@ -1263,7 +1401,7 @@
         // TOP VIDEOS BY VIEWS
         // ====================================================================
         async function renderTopVideosByViews() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     channel,
@@ -1272,7 +1410,7 @@
                     SUM(video_view) as views,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion
                 FROM analytics
-                WHERE ${dateWhere} AND video_view > 0
+                WHERE ${w} AND video_view > 0
                 GROUP BY channel, video_id
                 ORDER BY views DESC
                 LIMIT 20
@@ -1290,7 +1428,7 @@
         // TOP VIDEOS BY ENGAGEMENT
         // ====================================================================
         async function renderTopVideosByEngagement() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     channel,
@@ -1300,7 +1438,7 @@
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion,
                     ROUND(SUM(video_engagement_50) * 100.0 / NULLIF(SUM(video_view), 0), 1) as halfway
                 FROM analytics
-                WHERE ${dateWhere} AND video_view > 0 AND channel != 'Internet'
+                WHERE ${w} AND video_view > 0 ${internetClause()}
                 GROUP BY channel, video_id
                 HAVING SUM(video_view) >= 100
                 ORDER BY completion DESC
@@ -1320,7 +1458,7 @@
         // LOW PLAY RATE VIDEOS
         // ====================================================================
         async function renderLowPlayRate() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     channel,
@@ -1330,7 +1468,7 @@
                     SUM(video_view) as views,
                     ROUND(SUM(video_view) * 100.0 / NULLIF(SUM(video_impression), 0), 1) as play_rate
                 FROM analytics
-                WHERE ${dateWhere} AND video_impression > 0
+                WHERE ${w} AND video_impression > 0
                 GROUP BY channel, video_id
                 HAVING SUM(video_impression) >= 100
                 ORDER BY play_rate ASC
@@ -1350,7 +1488,7 @@
         // CHANNEL TABLE
         // ====================================================================
         async function renderChannelTable() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     channel,
@@ -1360,7 +1498,7 @@
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion,
                     ROUND(SUM(views_mobile) * 100.0 / NULLIF(SUM(video_view), 0), 1) as mobile_pct
                 FROM analytics
-                WHERE ${dateWhere} AND video_view > 0
+                WHERE ${w} AND video_view > 0
                 GROUP BY channel
                 ORDER BY views DESC
             `);
@@ -1379,13 +1517,13 @@
         // CHANNEL EFFICIENCY CHART
         // ====================================================================
         async function renderChannelEfficiency() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     channel,
                     ROUND(SUM(video_view) * 1.0 / NULLIF(COUNT(DISTINCT video_id), 0), 0) as views_per_video
                 FROM analytics
-                WHERE ${dateWhere} AND video_view > 0
+                WHERE ${w} AND video_view > 0
                 GROUP BY channel
                 ORDER BY views_per_video DESC
             `);
@@ -1418,13 +1556,13 @@
         // CHANNEL ENGAGEMENT CHART
         // ====================================================================
         async function renderChannelEngagement() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     channel,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion
                 FROM analytics
-                WHERE ${dateWhere} AND video_view > 0 AND channel != 'Internet'
+                WHERE ${w} AND video_view > 0 ${internetClause()}
                 GROUP BY channel
                 ORDER BY completion DESC
             `);
@@ -1460,7 +1598,7 @@
         // CHANNEL FUNNEL TABLE
         // ====================================================================
         async function renderChannelFunnel() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     channel,
@@ -1470,7 +1608,7 @@
                     ROUND(SUM(video_engagement_75) * 100.0 / NULLIF(SUM(video_view), 0), 1) as reached_75,
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completed
                 FROM analytics
-                WHERE ${dateWhere} AND video_view > 0 AND channel != 'Internet'
+                WHERE ${w} AND video_view > 0 ${internetClause()}
                 GROUP BY channel
                 ORDER BY completed DESC
             `);
@@ -1489,7 +1627,7 @@
         // DEVICE PIE
         // ====================================================================
         async function renderDevicePie() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     SUM(views_desktop) as desktop,
@@ -1497,7 +1635,7 @@
                     SUM(views_tablet) as tablet,
                     SUM(views_other) as other_device
                 FROM analytics
-                WHERE ${dateWhere}
+                WHERE ${w}
             `);
 
             const row = data[0];
@@ -1546,7 +1684,7 @@
         // DEVICE BAR
         // ====================================================================
         async function renderDeviceBar() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     SUM(views_desktop) as desktop,
@@ -1554,7 +1692,7 @@
                     SUM(views_tablet) as tablet,
                     SUM(views_other) as other_device
                 FROM analytics
-                WHERE ${dateWhere}
+                WHERE ${w}
             `);
 
             const row = data[0];
@@ -1592,14 +1730,14 @@
         // DEVICE TREND
         // ====================================================================
         async function renderDeviceTrend() {
-            const dateWhere = getDateWhereClause();
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     DATE_TRUNC('month', date)::VARCHAR as month,
                     ROUND(SUM(views_desktop) * 100.0 / NULLIF(SUM(views_desktop) + SUM(views_mobile) + SUM(views_tablet), 0), 1) as desktop_pct,
                     ROUND(SUM(views_mobile) * 100.0 / NULLIF(SUM(views_desktop) + SUM(views_mobile) + SUM(views_tablet), 0), 1) as mobile_pct
                 FROM analytics
-                WHERE ${dateWhere}
+                WHERE ${w}
                   AND DATE_TRUNC('month', date) < DATE_TRUNC('month', CURRENT_DATE)
                 GROUP BY 1 ORDER BY 1
             `);
@@ -1643,22 +1781,26 @@
         // STALE CONTENT
         // ====================================================================
         async function renderStaleContent() {
+            const channelWhere = channelFilterValue ? `AND d.channel = '${channelFilterValue.replace(/'/g, "''")}'` : '';
+            const videoWhere = videoSearchValue.length >= 2 ? `AND d.name ILIKE '%${videoSearchValue.replace(/'/g, "''")}%'` : '';
             const data = await query(`
                 SELECT
-                    channel,
-                    video_id,
-                    name,
-                    video_duration_seconds,
-                    created_at
-                FROM dims
-                WHERE video_id IN (
+                    d.channel,
+                    d.video_id,
+                    d.name,
+                    d.video_duration_seconds,
+                    d.created_at
+                FROM dims d
+                WHERE d.video_id IN (
                     SELECT video_id
                     FROM facts
                     WHERE dt_last_viewed IS NOT NULL
                     GROUP BY video_id
                     HAVING CAST(MAX(dt_last_viewed) AS DATE) < CURRENT_DATE - INTERVAL '180 days'
                 )
-                ORDER BY name
+                ${channelWhere}
+                ${videoWhere}
+                ORDER BY d.name
                 LIMIT 50
             `);
 
@@ -1679,6 +1821,8 @@
         // RECENT PERFORMERS
         // ====================================================================
         async function renderRecentPerformers() {
+            const channelWhere = channelFilterValue ? `AND channel = '${channelFilterValue.replace(/'/g, "''")}'` : '';
+            const videoWhere = videoSearchValue.length >= 2 ? `AND name ILIKE '%${videoSearchValue.replace(/'/g, "''")}%'` : '';
             const data = await query(`
                 SELECT
                     channel,
@@ -1689,6 +1833,8 @@
                 FROM analytics
                 WHERE date >= CURRENT_DATE - INTERVAL '30 days'
                   AND video_view > 0
+                  ${channelWhere}
+                  ${videoWhere}
                 GROUP BY channel, video_id
                 ORDER BY views DESC
                 LIMIT 20
@@ -1709,23 +1855,13 @@
             const data = await query(`SELECT DISTINCT channel FROM dims WHERE channel IS NOT NULL ORDER BY channel`);
             allChannels = data.map(r => r.channel);
             const select = document.getElementById('channelFilter');
+            const current = select.value;
             select.innerHTML = '<option value="">All Channels</option>' +
-                allChannels.map(ch => `<option value="${ch}">${ch}</option>`).join('');
+                allChannels.map(ch => `<option value="${ch}"${ch === current ? ' selected' : ''}>${ch}</option>`).join('');
         }
 
-        async function searchVideos() {
-            const searchTerm = document.getElementById('videoSearch').value.trim();
-            const channelFilter = document.getElementById('channelFilter').value;
-            const dateWhere = getDateWhereClause();
-
-            let where = `${dateWhere} AND video_view > 0`;
-            if (channelFilter) {
-                where += ` AND channel = '${channelFilter.replace(/'/g, "''")}'`;
-            }
-            if (searchTerm.length >= 2) {
-                where += ` AND name ILIKE '%${searchTerm.replace(/'/g, "''")}%'`;
-            }
-
+        async function renderExploreTable() {
+            const w = getWhereClause();
             const data = await query(`
                 SELECT
                     channel,
@@ -1735,13 +1871,12 @@
                     ROUND(SUM(video_engagement_100) * 100.0 / NULLIF(SUM(video_view), 0), 1) as completion,
                     ROUND(MAX(video_duration_seconds), 0) as duration_sec
                 FROM analytics
-                WHERE ${where}
+                WHERE ${w} AND video_view > 0
                 GROUP BY channel, video_id
                 ORDER BY views DESC
                 LIMIT 100
             `);
 
-            document.getElementById('searchResultCount').textContent = `${data.length} result${data.length !== 1 ? 's' : ''}`;
             document.getElementById('exploreTable').innerHTML = renderTable(data, [
                 { key: 'channel', label: 'Channel' },
                 { key: 'name', label: 'Video Name', fmt: v => truncateStr(v, 80) },
