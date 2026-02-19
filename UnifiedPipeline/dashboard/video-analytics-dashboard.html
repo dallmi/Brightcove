@@ -961,13 +961,11 @@
             if (typeof v === 'bigint') return Number(v);
             if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return v;
             // Arrow objects (Date, Decimal, Int64 struct, etc.)
-            // Try valueOf() first — Arrow types often expose the primitive this way
             if (typeof v.valueOf === 'function') {
                 const prim = v.valueOf();
                 if (typeof prim === 'bigint') return Number(prim);
                 if (typeof prim !== 'object') return prim;
             }
-            // Last resort: toString() for Decimal and other numeric Arrow wrappers
             const s = String(v);
             const n = Number(s);
             return isNaN(n) ? s : n;
@@ -976,7 +974,27 @@
         async function query(sql) {
             const result = await conn.query(sql);
             const cols = result.schema.fields.map(f => f.name);
-            return result.toArray().map(row => {
+            const types = result.schema.fields.map(f => f.type.toString());
+            const rows = result.toArray();
+
+            // Debug: log schema types and first row raw values for every query
+            if (rows.length > 0) {
+                const firstRow = rows[0];
+                const debug = {};
+                for (let i = 0; i < cols.length; i++) {
+                    const raw = firstRow[cols[i]];
+                    debug[cols[i]] = {
+                        arrowType: types[i],
+                        jsType: typeof raw,
+                        constructor: raw?.constructor?.name,
+                        raw: typeof raw === 'bigint' ? raw.toString() + 'n' : raw,
+                        coerced: coerce(raw)
+                    };
+                }
+                console.log('query debug:', sql.trim().substring(0, 80), debug);
+            }
+
+            return rows.map(row => {
                 const obj = {};
                 for (const key of cols) {
                     obj[key] = coerce(row[key]);
