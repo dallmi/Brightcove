@@ -358,6 +358,34 @@
             color: var(--medium-gray);
             font-size: 0.75rem;
         }
+        .map-zoom-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            z-index: 10;
+        }
+        .map-zoom-btn {
+            width: 32px;
+            height: 32px;
+            border: 1px solid var(--light-gray);
+            background: var(--white);
+            border-radius: 4px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--dark-gray);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .map-zoom-btn:hover {
+            background: var(--lighter-gray);
+            border-color: var(--medium-gray);
+        }
 
         /* Tables */
         .table-container {
@@ -892,6 +920,10 @@
                         <div class="chart-title" id="mapTitle">Minutes Viewed by Location</div>
                         <div class="map-container" id="mapContainer">
                             <canvas id="chartGeoMap"></canvas>
+                            <div class="map-zoom-controls">
+                                <button class="map-zoom-btn" onclick="mapZoomIn()" title="Zoom in">+</button>
+                                <button class="map-zoom-btn" onclick="mapZoomOut()" title="Zoom out">−</button>
+                            </div>
                         </div>
                     </div>
                     <div id="mapDrillDetail" style="display:none;"></div>
@@ -2526,6 +2558,21 @@
         let currentMapLevel = 'world';
         let geoMapChart = null;
         let geoRegistered = false;
+        let mapZoomLevel = 1;
+
+        function mapZoomIn() {
+            mapZoomLevel = Math.min(mapZoomLevel * 1.4, 8);
+            applyMapZoom();
+        }
+        function mapZoomOut() {
+            mapZoomLevel = Math.max(mapZoomLevel / 1.4, 0.5);
+            applyMapZoom();
+        }
+        function applyMapZoom() {
+            if (!geoMapChart) return;
+            geoMapChart.options.scales.projection.projectionScale = mapZoomLevel;
+            geoMapChart.update();
+        }
 
         function ensureGeoRegistered() {
             if (geoRegistered) return;
@@ -2589,6 +2636,7 @@
         async function renderGeoMap() {
             ensureGeoRegistered();
             currentMapLevel = 'world';
+            mapZoomLevel = 1;
             updateMapBreadcrumb();
             await renderWorldMap();
         }
@@ -2684,6 +2732,7 @@
 
         async function drillIntoCountry(countryName) {
             currentMapLevel = countryName;
+            mapZoomLevel = 1;
             updateMapBreadcrumb();
 
             if (countryName === 'United States of America') {
@@ -2699,7 +2748,19 @@
             const topo = await loadUSTopology();
             const states = ChartGeo.topojson.feature(topo, topo.objects.states).features;
 
-            const stateChartData = states.map(f => ({ feature: f, value: 0 }));
+            // Get US total minutes to show uniform coloring across states
+            const w = getWhereClause();
+            const nameList = getDataCountryNames('United States of America').map(n => `'${n.replace(/'/g, "''")}'`).join(',');
+            const usData = await query(`
+                SELECT ROUND(SUM(video_seconds_viewed) / 60.0, 0) as total_minutes
+                FROM analytics
+                WHERE ${w} AND country IN (${nameList}) AND video_seconds_viewed > 0
+            `);
+            const usTotal = usData[0]?.total_minutes || 0;
+            // Distribute evenly so color scale renders visible shading
+            const perState = usTotal > 0 ? Math.round(usTotal / states.length) : 0;
+
+            const stateChartData = states.map(f => ({ feature: f, value: perState }));
 
             if (geoMapChart) { geoMapChart.destroy(); geoMapChart = null; }
 
@@ -2712,9 +2773,6 @@
                         label: 'Minutes Viewed',
                         outline: states,
                         data: stateChartData,
-                        backgroundColor: '#F5F5F5',
-                        borderColor: '#999999',
-                        borderWidth: 0.5,
                     }]
                 },
                 options: {
@@ -2724,19 +2782,34 @@
                         legend: { display: false },
                         tooltip: {
                             callbacks: {
-                                label: (item) => `${item.raw.feature.properties.name}: state-level data not yet available`
+                                label: (item) => {
+                                    const name = item.raw.feature.properties.name;
+                                    return usTotal > 0
+                                        ? `${name} (US total: ${fmt(usTotal)} min — state breakdown not yet available)`
+                                        : `${name}: no data`;
+                                }
                             }
                         }
                     },
                     scales: {
                         projection: { axis: 'x', projection: 'albersUsa' },
-                        color: { axis: 'x', quantize: 5, legend: { display: false } }
+                        color: {
+                            axis: 'x',
+                            quantize: 5,
+                            interpolate: (v) => {
+                                const r = Math.round(245 + (189 - 245) * v);
+                                const g = Math.round(245 + (0 - 245) * v);
+                                const b = Math.round(245 + (12 - 245) * v);
+                                return `rgb(${r},${g},${b})`;
+                            },
+                            legend: { display: false }
+                        }
                     }
                 }
             });
 
             document.getElementById('mapTitle').innerHTML =
-                'Minutes Viewed by State <span style="font-size:0.75rem;color:var(--medium-gray);font-weight:normal;">(state-level analytics not yet in pipeline)</span>';
+                'Minutes Viewed by State <span style="font-size:0.75rem;color:var(--medium-gray);font-weight:normal;">(state-level breakdown not yet in pipeline)</span>';
         }
 
         async function renderCountryDrillDetail(countryName) {
@@ -2822,6 +2895,7 @@
 
         async function backToWorldMap() {
             currentMapLevel = 'world';
+            mapZoomLevel = 1;
             updateMapBreadcrumb();
             document.getElementById('mapDrillDetail').style.display = 'none';
             await renderWorldMap();
