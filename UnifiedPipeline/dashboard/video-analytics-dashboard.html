@@ -947,15 +947,29 @@
             return s.length > maxLen ? s.substring(0, maxLen) + '...' : s;
         }
 
+        function coerce(v) {
+            if (typeof v === 'bigint') return Number(v);
+            if (v !== null && typeof v === 'object') {
+                // DuckDB Date/Timestamp objects may wrap BigInt internally
+                if (typeof v.valueOf === 'function') {
+                    const prim = v.valueOf();
+                    if (typeof prim === 'bigint') return Number(prim);
+                }
+                // Arrow Decimal types
+                if (typeof v.toString === 'function' && v.constructor && v.constructor.name !== 'Object') {
+                    return Number(v.toString());
+                }
+            }
+            return v;
+        }
+
         async function query(sql) {
             const result = await conn.query(sql);
             const cols = result.schema.fields.map(f => f.name);
             return result.toArray().map(row => {
                 const obj = {};
                 for (const key of cols) {
-                    let v = row[key];
-                    if (typeof v === 'bigint') v = Number(v);
-                    obj[key] = v;
+                    obj[key] = coerce(row[key]);
                 }
                 return obj;
             });
