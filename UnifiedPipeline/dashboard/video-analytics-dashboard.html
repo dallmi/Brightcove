@@ -1539,9 +1539,15 @@
         function onChannelSelectAll() {
             const selectAll = document.getElementById('channelSelectAll');
             const boxes = document.querySelectorAll('#channelDropdown input[type="checkbox"][value]');
-            boxes.forEach(cb => cb.checked = selectAll.checked);
-            // All checked = no filter (show everything)
-            channelFilterValue = [];
+            if (selectAll.checked) {
+                // Check all → no filter (show everything)
+                boxes.forEach(cb => cb.checked = true);
+                channelFilterValue = [];
+            } else {
+                // Uncheck all → nothing selected
+                boxes.forEach(cb => cb.checked = false);
+                channelFilterValue = ['__none__'];
+            }
             updateChannelToggleLabel();
             updateActiveFilters();
             renderDashboard();
@@ -1569,6 +1575,8 @@
             const label = document.getElementById('channelToggleLabel');
             if (channelFilterValue.length === 0) {
                 label.textContent = 'All Channels';
+            } else if (channelFilterValue.length === 1 && channelFilterValue[0] === '__none__') {
+                label.textContent = 'No Channels';
             } else if (channelFilterValue.length === 1) {
                 label.textContent = channelFilterValue[0];
             } else {
