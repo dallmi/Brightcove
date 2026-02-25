@@ -94,8 +94,8 @@ st.markdown(f"""
 
     /* SQL code block */
     .sql-block {{
-        background: #1e1e1e;
-        color: #d4d4d4;
+        background: #404040;
+        color: #CCCABC;
         padding: 1rem;
         border-radius: 8px;
         font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
@@ -129,18 +129,18 @@ st.markdown(f"""
     }}
 
     .status-success {{
-        background: #E6F4EA;
+        background: #F0F2E6;
         color: {COLORS['success']};
     }}
 
     .status-error {{
-        background: #FEECED;
+        background: #FFEBE6;
         color: {COLORS['error']};
     }}
 
     .status-warning {{
-        background: #FFF8E6;
-        color: #B25000;
+        background: #FDF6E3;
+        color: #E4A911;
     }}
 
     /* Sidebar styling */

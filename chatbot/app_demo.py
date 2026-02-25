@@ -334,7 +334,7 @@ st.markdown(f"""
 
     /* SQL display */
     .sql-container {{
-        background: #1a1a2e;
+        background: #404040;
         border-radius: 6px;
         padding: 1rem;
         margin: 1rem 0;
@@ -342,7 +342,7 @@ st.markdown(f"""
     }}
 
     .sql-container code {{
-        color: #a8dadc;
+        color: #CCCABC;
         font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
         font-size: 0.8rem;
         line-height: 1.5;
@@ -522,7 +522,7 @@ st.markdown(f"""
     }}
 
     .primary-btn > button:hover {{
-        background: #cc0000 !important;
+        background: #8A000A !important;
     }}
 
     /* Input styling */
@@ -584,7 +584,7 @@ st.markdown(f"""
     }}
 
     .status-connected {{
-        background: #E8F5E9;
+        background: #F0F2E6;
         color: {COLORS['success']};
     }}
 
@@ -657,12 +657,12 @@ st.markdown(f"""
 
     .insight-card-metric.negative {{
         color: {COLORS['error']};
-        background: #FFF5F5;
+        background: #FFEBE6;
     }}
 
     .insight-card-metric.positive {{
         color: {COLORS['success']};
-        background: #E8F5E9;
+        background: #F0F2E6;
     }}
 
     .insight-card-detail {{
@@ -734,22 +734,22 @@ st.markdown(f"""
     }}
 
     .action-badge.impact-high {{
-        background: #E8F5E9;
+        background: #F0F2E6;
         color: {COLORS['success']};
     }}
 
     .action-badge.impact-medium {{
-        background: #FFF8E1;
+        background: #FDF6E3;
         color: {COLORS['warning']};
     }}
 
     .action-badge.effort-low {{
-        background: #E3F2FD;
+        background: #ECEBE4;
         color: {COLORS['chart_1']};
     }}
 
     .action-badge.effort-medium {{
-        background: #F3E5F5;
+        background: #ECEBE4;
         color: {COLORS['chart_3']};
     }}
 
@@ -1120,8 +1120,8 @@ def create_scatter_chart(df, x_col, y_col, size_col=None, color_col=None, title=
             color=color_col if color_col else None,
             color_discrete_sequence=[
                 COLORS['chart_1'], COLORS['chart_2'], COLORS['chart_3'],
-                COLORS['chart_4'], COLORS['chart_5'], COLORS.get('chart_6', '#9CA3AF'),
-                COLORS.get('chart_7', '#6366F1'), COLORS.get('chart_8', '#EC4899')
+                COLORS['chart_4'], COLORS['chart_5'], COLORS.get('chart_6', '#B8B3A2'),
+                COLORS.get('chart_7', '#4972AC'), COLORS.get('chart_8', '#AD3E4A')
             ],
             hover_data=df.columns.tolist(),
             trendline="ols",  # Single OLS regression line across all data
@@ -1144,8 +1144,8 @@ def create_scatter_chart(df, x_col, y_col, size_col=None, color_col=None, title=
             color=color_col if color_col else None,
             color_discrete_sequence=[
                 COLORS['chart_1'], COLORS['chart_2'], COLORS['chart_3'],
-                COLORS['chart_4'], COLORS['chart_5'], COLORS.get('chart_6', '#9CA3AF'),
-                COLORS.get('chart_7', '#6366F1'), COLORS.get('chart_8', '#EC4899')
+                COLORS['chart_4'], COLORS['chart_5'], COLORS.get('chart_6', '#B8B3A2'),
+                COLORS.get('chart_7', '#4972AC'), COLORS.get('chart_8', '#AD3E4A')
             ],
             hover_data=df.columns.tolist(),
         )

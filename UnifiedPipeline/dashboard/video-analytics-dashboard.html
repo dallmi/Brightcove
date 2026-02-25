@@ -28,23 +28,23 @@
     <style>
         :root {
             --primary: #BD000C;
-            --primary-dark: #9A000A;
+            --primary-dark: #8A000A;
             --primary-light: #D4353F;
             --black: #000000;
-            --dark-gray: #333333;
-            --medium-gray: #666666;
-            --light-gray: #D9D9D9;
-            --lighter-gray: #F5F5F5;
+            --dark-gray: #404040;
+            --medium-gray: #7A7870;
+            --light-gray: #CCCABC;
+            --lighter-gray: #ECEBE4;
             --white: #FFFFFF;
             --success: #6F7A1A;
             --success-light: #F0F2E6;
             --warning: #E4A911;
             --warning-light: #FDF6E3;
             --danger: #BD000C;
-            --danger-light: #FCEAEB;
-            --info: #333333;
-            --info-light: #ECECEC;
-            --row-alt: #FAFAFA;
+            --danger-light: #FFEBE6;
+            --info: #8E8D83;
+            --info-light: #ECEBE4;
+            --row-alt: #F5F0E1;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1003,15 +1003,15 @@
             success: '#6F7A1A',
             warning: '#E4A911',
             danger: '#BD000C',
-            info: '#333333',
+            info: '#8E8D83',
             // Default chart color: dark gray (use for single-series neutral charts)
-            chart: '#555555',
-            chartLight: '#77777799',
+            chart: '#5A5D5C',
+            chartLight: '#8E8D8399',
             // Gray palette for multi-series charts (no semantic meaning)
             palette: [
-                '#333333', '#666666', '#888888', '#AAAAAA', '#555555',
-                '#777777', '#999999', '#BBBBBB', '#444444', '#7A7A7A',
-                '#9E9E9E'
+                '#404040', '#7A7870', '#8E8D83', '#CCCABC', '#5A5D5C',
+                '#8E8D83', '#B8B3A2', '#CCCABC', '#404040', '#8E8D83',
+                '#B8B3A2'
             ]
         };
 
@@ -1899,7 +1899,7 @@
             const row = data[0];
             const labels = ['Completed (100%)', 'Reached 75%', 'Reached 50%', 'Reached 25%', 'Started (1%)'];
             const values = [row.completed, row.reached_75, row.reached_50, row.reached_25, row.started];
-            const colors = ['#333333', '#555555', '#777777', '#999999', '#BBBBBB'];
+            const colors = ['#404040', '#5A5D5C', '#8E8D83', '#B8B3A2', '#CCCABC'];
 
             destroyChart('chartFunnel');
             const ctx = document.getElementById('chartFunnel').getContext('2d');
@@ -2428,7 +2428,7 @@
             const row = data[0];
             const labels = [];
             const values = [];
-            const colors = ['#444444', '#777777', '#AAAAAA', '#CCCCCC'];
+            const colors = ['#404040', '#8E8D83', '#CCCABC', '#CCCABC'];
 
             if (row.desktop > 0) { labels.push('Desktop'); values.push(row.desktop); }
             if (row.mobile > 0) { labels.push('Mobile'); values.push(row.mobile); }
@@ -2498,7 +2498,7 @@
                     labels: entries.map(e => e.label),
                     datasets: [{
                         data: entries.map(e => e.value),
-                        backgroundColor: ['#44444499', '#77777799', '#AAAAAA99', '#CCCCCC99'],
+                        backgroundColor: ['#40404099', '#8E8D8399', '#CCCABC99', '#CCCABC99'],
                         borderWidth: 0
                     }]
                 },
@@ -2539,14 +2539,14 @@
                         {
                             label: 'Desktop %',
                             data: data.map(r => r.desktop_pct),
-                            borderColor: '#444444',
+                            borderColor: '#404040',
                             tension: 0.3,
                             pointRadius: 3
                         },
                         {
                             label: 'Mobile %',
                             data: data.map(r => r.mobile_pct),
-                            borderColor: '#999999',
+                            borderColor: '#B8B3A2',
                             tension: 0.3,
                             pointRadius: 3
                         }
@@ -2720,9 +2720,11 @@
                             axis: 'x',
                             quantize: 5,
                             interpolate: (v) => {
-                                // Gray gradient: lighter-gray (#F5F5F5) → dark-gray (#333333)
-                                const c = Math.round(245 + (51 - 245) * v);
-                                return `rgb(${c},${c},${c})`;
+                                // Gray gradient: lighter-gray (#ECEBE4) → dark-gray (#404040)
+                                const r = Math.round(236 + (64 - 236) * v);
+                                const g = Math.round(235 + (64 - 235) * v);
+                                const b = Math.round(228 + (64 - 228) * v);
+                                return `rgb(${r},${g},${b})`;
                             },
                             legend: {
                                 position: 'bottom-right',

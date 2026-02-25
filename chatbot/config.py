@@ -106,30 +106,30 @@ IMPORTANT NOTES:
 # Red used ONLY for key accents, not backgrounds
 COLORS = {
     # Primary palette - minimal red
-    "accent": "#E60100",        # Corporate red - use sparingly
+    "accent": "#E60000",        # Corporate red - use sparingly
     "accent_light": "#FFF0F0",  # Very light red for subtle highlights
 
     # Neutral palette - dominant
     "black": "#000000",         # Primary text, headings
-    "dark": "#1A1A1A",          # Secondary text
-    "gray_dark": "#4A4A4A",     # Body text
-    "gray": "#6B6B6B",          # Secondary info
-    "gray_light": "#9B9B9B",    # Tertiary info
-    "border": "#E5E5E5",        # Borders and dividers
-    "surface": "#F7F7F7",       # Card backgrounds
+    "dark": "#404040",           # Secondary text
+    "gray_dark": "#5A5D5C",     # Body text
+    "gray": "#7A7870",          # Secondary info
+    "gray_light": "#B8B3A2",    # Tertiary info
+    "border": "#ECEBE4",        # Borders and dividers
+    "surface": "#ECEBE4",       # Card backgrounds
     "background": "#FFFFFF",    # Page background
 
     # Semantic colors
-    "success": "#00875A",       # Positive metrics
-    "warning": "#B25000",       # Warnings
-    "error": "#D32F2F",         # Errors (different from brand red)
+    "success": "#6F7A1A",       # Positive metrics
+    "warning": "#E4A911",       # Warnings
+    "error": "#BD000C",         # Errors (different from brand red)
 
     # Chart colors - professional palette
-    "chart_1": "#2D5BFF",       # Primary blue
-    "chart_2": "#00B8A9",       # Teal
-    "chart_3": "#7C4DFF",       # Purple
-    "chart_4": "#FF6B6B",       # Coral (not brand red)
-    "chart_5": "#FFB800",       # Amber
+    "chart_1": "#0C7EC6",       # Lake50
+    "chart_2": "#45999C",       # Mint50
+    "chart_3": "#804C95",       # Aubergine60
+    "chart_4": "#AD3E4A",       # Blush60
+    "chart_5": "#AF8626",       # Bronze50
 }
 
 APP_TITLE = "Video Analytics Intelligence"
